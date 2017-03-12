@@ -21,9 +21,10 @@
 /// This control was originally written for Fityk (http://fityk.sf.net)
 
 #include <wx/wx.h>
-#include <stdio.h>
+#include <stdio.h>  // fgets()
 
 #include "inputline.h"
+#include "cmn.h"
 
 
 InputLine::InputLine(wxWindow *parent, wxWindowID id,
@@ -56,16 +57,15 @@ InputLine::InputLine(wxWindow *parent, wxWindowID id,
                       wxKeyEventHandler(InputLine::OnKeyDownAtSpinButton),
                       NULL, this);
     // read history
-    char line[512];
     if (!hist_file.IsEmpty()) {
-        FILE *f = fopen(hist_file.mb_str(), "r");
-        if (f) {
-            while (fgets(line, 512, f)) {
+        FFile f(hist_file, "r");
+        if (f.IsOpened()) {
+            char line[512];
+            while (fgets(line, 512, f.fp())) {
                 wxString s = wxString(line, wxConvUTF8).Trim();
                 if (!s.empty())
                     m_history.Add(s);
             }
-            fclose(f);
         }
     }
     // add empty line that will be displayed initially
@@ -78,13 +78,11 @@ InputLine::~InputLine()
     // write history
     if (hist_file.IsEmpty())
         return;
-    FILE *f = fopen(hist_file.mb_str(), "w");
-    if (!f)
+    FFile f(hist_file, "w");
+    if (!f.IsOpened())
         return;
-    for (size_t i = 0; i < m_history.GetCount(); ++i) {
-        fprintf(f, "%s\n", (const char*) m_history[i].mb_str());
-    }
-    fclose(f);
+    for (size_t i = 0; i < m_history.GetCount(); ++i)
+        f.Write(m_history[i] + "\n", wxConvUTF8);
 }
 
 wxSize InputLine::DoGetBestSize() const
@@ -119,10 +117,14 @@ void InputLine::HistoryMove(int n, bool relative)
 
 void InputLine::OnInputLine(const wxString& line)
 {
-    m_history.Last() = line;
-    m_history.Add(wxT(""));
+    m_history.Last() += line;
+    if (line.EndsWith('\\')) {
+        *(m_history.Last().end()-1) = ' ';
+        return;
+    }
+    m_observer->ProcessInputLine(m_history.Last());
+    m_history.Add("");
     GoToHistoryEnd();
-    m_observer->ProcessInputLine(line);
     m_text->SetFocus();
 }
 

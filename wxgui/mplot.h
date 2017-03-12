@@ -1,10 +1,11 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_MPLOT_H_
 #define FITYK_WX_MPLOT_H_
 
 #include "plot.h"
+#include "fityk/tplate.h" // Tplate::Kind
 
 /// it cares about visualization of spline / polyline background
 /// which can be set by selecting points on Plot
@@ -12,7 +13,7 @@
 namespace fityk { class Function; }
 class HintReceiver;
 class BgManager;
-class FunctionMouseDrag;
+class DraggedFunc;
 
 // operation started by pressing mouse button
 enum MouseOperation
@@ -42,7 +43,6 @@ class MainPlot : public FPlot
 {
     friend class MainPlotConfDlg;
 public:
-    enum Kind { kLinear, kPeak };
     static const int kMaxDataColors = 256;
 
     MainPlot(wxWindow *parent);
@@ -63,6 +63,8 @@ public:
     void OnPeakInfo(wxCommandEvent&) { PeakInfo(); }
     void OnPeakDelete(wxCommandEvent& event);
     void OnPeakGuess(wxCommandEvent &event);
+    void OnPeakEdit(wxCommandEvent &event);
+    void OnPeakShare(wxCommandEvent &event);
     // function called when Esc is pressed
     virtual void cancel_action()
         { cancel_mouse_press(); overlay.draw_overlay(); }
@@ -103,7 +105,7 @@ public:
 
 private:
     BgManager* bgm_;
-    FunctionMouseDrag *fmd_; //for function dragging
+    DraggedFunc *dragged_func_; // for mouse-driven function dragging
     MouseModeEnum basic_mode_,
                   mode_;  ///actual mode -- either basic_mode_ or mmd_peak
 
@@ -126,7 +128,7 @@ private:
     int pressed_mouse_button_;
     MouseOperation mouse_op_;
     int over_peak_; /// the cursor is over peaktop of this peak
-    Kind func_draft_kind_; // for function adding (with drawing draft)
+    fityk::Tplate::Kind func_draft_kind_; // for function adding (drawing draft)
     HintReceiver *hint_receiver_; // used to set mouse hints, probably statusbar
     bool auto_freeze_;
 

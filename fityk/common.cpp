@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -6,8 +6,7 @@
 #include <string>
 #include <time.h>
 #include <stdlib.h>
-#include "ui.h"
-#include "logic.h"
+#include <assert.h>
 
 using namespace std;
 
@@ -72,8 +71,7 @@ void replace_words(string &t, const string &old_word, const string &new_word)
               && (pos+k==t.size() || !(isalnum(t[pos+k]) || t[pos+k]=='_'))) {
             t.replace(pos, k, new_word);
             pos += new_word.size();
-        }
-        else
+        } else
             pos++;
     }
 }
@@ -101,8 +99,7 @@ find_matching_bracket(const string& formula, string::size_type left_pos)
             if (level == 1)
                 return p;
             --level;
-        }
-        else if (formula[p] == opening)
+        } else if (formula[p] == opening)
             ++level;
     }
     throw ExecuteError("Matching bracket `" + S(closing) + "' not found.");
@@ -123,8 +120,7 @@ bool match_glob(const char* name, const char* pattern)
                     return true;
                 --name;
             }
-        }
-        else {
+        } else {
             if (*name != *pattern)
                 return false;
             ++name;

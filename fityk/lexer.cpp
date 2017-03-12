@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 /// Lexical analyser. Takes C string and yields tokens.
@@ -44,7 +44,7 @@ const char* tokentype2str(TokenType tt)
         case kTokenFuncname: return "%func_name";
         case kTokenNumber: return "number";
         case kTokenDataset: return "@dataset";
-        case kTokenFilename: return "filename";
+        case kTokenWord: return "word";
         case kTokenExpr: return "expr";
         case kTokenEVar: return "var-expr";
         case kTokenRest: return "rest-of-line";
@@ -96,7 +96,7 @@ string token2str(const Token& token)
         case kTokenLname:
         case kTokenCname:
         case kTokenUletter:
-        case kTokenFilename:
+        case kTokenWord:
         case kTokenRest:
             return s + " \"" + token.as_string() + "\"";
         case kTokenExpr:
@@ -142,12 +142,10 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '=') {
                 tok_.type = kTokenGE;
                 ++ptr;
-            }
-            else if (*ptr == '>') {
+            } else if (*ptr == '>') {
                 tok_.type = kTokenAppend;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenGT;
             break;
         case '<':
@@ -155,12 +153,10 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '=') {
                 tok_.type = kTokenLE;
                 ++ptr;
-            }
-            else if (*ptr == '>') {
+            } else if (*ptr == '>') {
                 tok_.type = kTokenNE;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenLT;
             break;
         case '=':
@@ -168,8 +164,7 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '=') {
                 tok_.type = kTokenEQ;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenAssign;
             break;
         case '+':
@@ -177,12 +172,10 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '-') {
                 tok_.type = kTokenPlusMinus;
                 ++ptr;
-            }
-            else if (*ptr == '=') {
+            } else if (*ptr == '=') {
                 tok_.type = kTokenAddAssign;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenPlus;
             break;
         case '-':
@@ -190,8 +183,7 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '=') {
                 tok_.type = kTokenSubAssign;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenMinus;
             break;
 
@@ -200,8 +192,7 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '=') {
                 tok_.type = kTokenNE;
                 ++ptr;
-            }
-            else
+            } else
                 tok_.type = kTokenBang;
             break;
 
@@ -212,14 +203,12 @@ void Lexer::read_token(bool allow_glob)
                 tok_.value.d = strtod(ptr-1, &endptr);
                 ptr = endptr;
                 tok_.type = kTokenNumber;
-            }
-            else if (*ptr == '.') {
+            } else if (*ptr == '.') {
                 ++ptr;
                 if (*ptr == '.') // 3rd dot
                     ++ptr;
                 tok_.type = kTokenDots;
-            }
-            else
+            } else
                 tok_.type = kTokenDot;
             break;
         case '@':
@@ -228,17 +217,14 @@ void Lexer::read_token(bool allow_glob)
             if (*ptr == '*') {
                 tok_.value.i = kAll;
                 ++ptr;
-            }
-            else if (*ptr == '+') {
+            } else if (*ptr == '+') {
                 tok_.value.i = kNew;
                 ++ptr;
-            }
-            else if (isdigit(*ptr)) {
+            } else if (isdigit(*ptr)) {
                 char *endptr;
                 tok_.value.i = strtol(ptr, &endptr, 10);
                 ptr = endptr;
-            }
-            else
+            } else
                 throw SyntaxError("unexpected character after '@'");
             break;
         case '$':
@@ -248,6 +234,7 @@ void Lexer::read_token(bool allow_glob)
             // we do't want error when peeking)
             if (! (isalpha(*ptr) || *ptr == '_' || *ptr == '*'))
                 throw SyntaxError("unexpected character after '$'");
+            ++ptr;
             tok_.type = kTokenVarname;
             while (isalnum(*ptr) || *ptr == '_' || (allow_glob && *ptr == '*'))
                 ++ptr;
@@ -257,6 +244,7 @@ void Lexer::read_token(bool allow_glob)
             // the same rules as in the case of '$'
             if (! (isalpha(*ptr) || *ptr == '_' || *ptr == '*'))
                 throw SyntaxError("unexpected character after '%'");
+            ++ptr;
             tok_.type = kTokenFuncname;
             while (isalnum(*ptr) || *ptr == '_' || (allow_glob && *ptr == '*'))
                 ++ptr;
@@ -283,23 +271,19 @@ void Lexer::read_token(bool allow_glob)
                 tok_.value.d = strtod(ptr, &endptr);
                 ptr = endptr;
                 tok_.type = kTokenNumber;
-            }
-            else if (isupper(*ptr)) {
+            } else if (isupper(*ptr)) {
                 ++ptr;
                 if (isalnum(*ptr)) {
                     while (isalnum(*ptr))
                         ++ptr;
                     tok_.type = kTokenCname;
-                }
-                else
+                } else
                     tok_.type = kTokenUletter;
-            }
-            else if (isalpha(*ptr) || *ptr == '_') {
+            } else if (isalpha(*ptr) || *ptr == '_') {
                 while (isalnum(*ptr) || *ptr == '_')
                     ++ptr;
                 tok_.type = kTokenLname;
-            }
-            else
+            } else
                 throw SyntaxError("unexpected character: " + string(ptr, 1));
     }
     tok_.length = ptr - tok_.str;
@@ -339,14 +323,26 @@ Token Lexer::get_glob_token()
     return tok_;
 }
 
-Token Lexer::get_filename_token()
+Token Lexer::get_word_token()
 {
     Token t = get_token();
     if (t.type == kTokenString || t.type == kTokenNop)
         return t;
     while (*cur_ != '\0' && !isspace(*cur_) && *cur_ != ';' && *cur_ != '#')
         ++cur_;
-    t.type = kTokenFilename;
+    t.type = kTokenWord;
+    t.length = cur_ - t.str;
+    return t;
+}
+
+Token Lexer::get_rest_of_cmd()
+{
+    Token t = get_token();
+    if (t.type == kTokenString || t.type == kTokenNop)
+        return t;
+    while (*cur_ != '\0' && *cur_ != ';' && *cur_ != '#')
+        ++cur_;
+    t.type = kTokenRest;
     t.length = cur_ - t.str;
     return t;
 }

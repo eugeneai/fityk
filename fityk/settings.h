@@ -1,15 +1,13 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__SETTINGS__H__
-#define FITYK__SETTINGS__H__
-#include <map>
-#include <utility>
+#ifndef FITYK_SETTINGS_H_
+#define FITYK_SETTINGS_H_
 #include "common.h"
 
 namespace fityk {
 
-class Ftk;
+class BasicContext;
 
 // settings that can be changed using the set command
 struct FITYK_API Settings
@@ -23,7 +21,7 @@ struct FITYK_API Settings
     int pseudo_random_seed;
     std::string numeric_format;
     std::string logfile;
-    bool log_full;
+    bool log_output;
     double function_cutoff;
     std::string cwd; // current working directory
 
@@ -39,12 +37,17 @@ struct FITYK_API Settings
     int refresh_period;
     bool fit_replot;
     double domain_percent;
+    bool box_constraints;
     // fitting - LM
     double lm_lambda_start;
     double lm_lambda_up_factor;
     double lm_lambda_down_factor;
-    double lm_stop_rel_change;
     double lm_max_lambda;
+    double lm_stop_rel_change;
+    // fitting - MPFIT & NLopt
+    double ftol_rel;
+    double xtol_rel;
+    //double mpfit_gtol;
     // fitting - NM
     double nm_convergence;
     bool nm_move_all;
@@ -66,7 +69,7 @@ public:
         kNotFound // used as a return value from get_value_type()
     };
 
-    SettingsMgr(Ftk const* F);
+    SettingsMgr(BasicContext const* ctx);
 
     /// get all option keys that start with given string
     static std::vector<std::string> get_key_list (const std::string& start);
@@ -83,7 +86,9 @@ public:
     // getters
     const Settings& m() const { return m_; }
     /// get value of option as string
-    std::string get_as_string(const std::string& k) const;
+    std::string get_as_string(const std::string& k, bool quote_str=true) const;
+    /// get value of option as number
+    double get_as_number(const std::string& k) const;
     /// get kEnum index
     int get_enum_index(const std::string& k) const;
 
@@ -96,13 +101,11 @@ public:
     void do_srand();
     std::string format_double(double d) const
             { return format1<double, 32>(m_.numeric_format.c_str(), d); }
-#if USE_LONG_DOUBLE
     std::string format_double(long double d) const
             { return format1<long double, 64>(long_double_format_.c_str(), d); }
-#endif
 
 private:
-    const Ftk* F_; // used for msg()
+    const BasicContext* ctx_; // used for msg()
     Settings m_;
     std::string long_double_format_;
 

@@ -1,18 +1,18 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__SUM__H__
-#define FITYK__SUM__H__
+#ifndef FITYK_SUM_H_
+#define FITYK_SUM_H_
 #include <vector>
 #include <string>
 #include <utility>
-#include <memory>
-#include "common.h"
+#include "fityk.h"
+#include "common.h" // DISALLOW_COPY_AND_ASSIGN
 
 namespace fityk {
 
-class VariableManager;
-class Ftk;
+class ModelManager;
+class BasicContext;
 
 struct FunctionSum
 {
@@ -30,8 +30,8 @@ struct FunctionSum
 class FITYK_API Model
 {
 public:
-    Model(Ftk *F);
-    ~Model();
+    void destroy();
+    void clear();
 
     /// calculate model (single point)
     realt value(realt x) const;
@@ -51,8 +51,8 @@ public:
 
     std::string get_formula(bool simplify, const char *num_fmt,
                             bool extra_breaks) const;
-    std::string get_peak_parameters(const std::vector<realt>& errors) const;
-    std::vector<realt> get_symbolic_derivatives(realt x) const;
+    std::string get_peak_parameters(const std::vector<double>& errors) const;
+    std::vector<realt> get_symbolic_derivatives(realt x, realt *y) const;
     std::vector<realt> get_numeric_derivatives(realt x, realt numerical_h)const;
     realt zero_shift(realt x) const;
 
@@ -69,12 +69,18 @@ public:
 
     realt numarea(realt x1, realt x2, int nsteps) const;
     bool is_dependent_on_var(int idx) const;
-
+    int max_param_pos() const;
+    realt calculate_value_and_deriv(realt x, std::vector<realt> &dy_da) const;
 
 private:
-    const Ftk* F_;
-    VariableManager &mgr;
+    const BasicContext* ctx_;
+    ModelManager &mgr_;
     FunctionSum ff_, zz_;
+
+    // can be created/deleted only from ModelManager
+    friend class ModelManager;
+    Model(const BasicContext *ctx, ModelManager &mgr) : ctx_(ctx), mgr_(mgr) {}
+    ~Model() {}
 
     DISALLOW_COPY_AND_ASSIGN(Model);
 };

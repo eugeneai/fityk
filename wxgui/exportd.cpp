@@ -1,21 +1,61 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
-///  DataExportDlg
+
+/// export_data_dlg() and export_peak_parameters()
+/// which are called from the GUI menu.
 
 #include <wx/wx.h>
 #include <wx/config.h>
 #include <wx/statline.h>
+#include <wx/filename.h>
 
 #include "exportd.h"
 #include "cmn.h"
-#include "frame.h"
+#include "frame.h" //ftk
 
 #include "fityk/logic.h"
-#include "fityk/ui.h"
 #include "fityk/model.h" // get_ff()
 
 using namespace std;
 
+
+ExtraCheckBox::ExtraCheckBox(wxWindow* parent, const wxString& label,
+                             bool value)
+    : wxPanel(parent, -1)
+{
+    cb = new wxCheckBox(this, -1, label);
+    cb->SetValue(value);
+    wxBoxSizer *sizer = new wxBoxSizer(wxHORIZONTAL);
+#ifdef __WXMSW__
+    sizer->AddSpacer(100);
+    sizer->Add(cb, 0, wxLEFT|wxBOTTOM, 5);
+#else
+    sizer->Add(cb);
+#endif
+    SetSizerAndFit(sizer);
+}
+
+Extra2CheckBoxes::Extra2CheckBoxes(wxWindow* parent,
+                                   const wxString& label1, bool value1,
+                                   const wxString& label2, bool value2)
+    : wxPanel(parent, -1)
+{
+    cb1 = new wxCheckBox(this, -1, label1);
+    cb1->SetValue(value1);
+    cb2 = new wxCheckBox(this, -1, label2);
+    cb2->SetValue(value2);
+    wxBoxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+#ifdef __WXMSW__
+    sizer->Add(cb1, 0, wxLEFT|wxBOTTOM, 10);
+    sizer->Add(cb2, 0, wxLEFT|wxBOTTOM, 10);
+#else
+    sizer->Add(cb1);
+    sizer->Add(cb2, 0, wxTOP, 5);
+#endif
+    SetSizerAndFit(sizer);
+}
+
+// helper for export_data_dlg()
 class DataExportDlg : public wxDialog
 {
 public:
@@ -34,50 +74,6 @@ private:
     wxTextCtrl *text;
     wxArrayString cv;
 };
-
-
-void exec_redirected_command(const vector<int>& sel,
-                             const string& cmd, const wxString& path)
-{
-    if (sel.size() == 1) {
-        exec("@" + S(sel[0]) + ": " + cmd + " > '" + wx2s(path) + "'");
-        return;
-    }
-    string datasets;
-    if (ftk->get_dm_count() == (int) sel.size())
-        datasets = "@*";
-    else
-        datasets = "@" + join_vector(sel, " @");
-    if (wxFileExists(path))
-        exec("delete file '" + wx2s(path) + "'");
-    exec(datasets + ": " + cmd + " >> '" + wx2s(path) + "'");
-}
-
-/// show "Export data" dialog
-bool export_data_dlg(wxWindow *parent)
-{
-    static wxString dir = wxConfig::Get()->Read(wxT("/exportDir"));
-
-    vector<int> sel = frame->get_selected_data_indices();
-
-    int f_count = 0;
-    if (sel.size() == 1)
-        f_count = ftk->get_model(sel[0])->get_ff().names.size();
-
-    DataExportDlg ded(parent, -1, f_count);
-    if (ded.ShowModal() != wxID_OK)
-        return false;
-
-    wxFileDialog filedlg(parent, wxT("Export data to file"), dir, wxT(""),
-                         wxT("x y data (*.dat, *.xy)|*.dat;*.DAT;*.xy;*.XY"),
-                         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-    dir = filedlg.GetDirectory();
-    if (filedlg.ShowModal() != wxID_OK)
-        return false;
-    exec_redirected_command(sel, "print " + ded.get_text(), filedlg.GetPath());
-    return true;
-}
-
 
 DataExportDlg::DataExportDlg(wxWindow* parent, wxWindowID id, int f_count)
     : wxDialog(parent, id, wxT("Export data/functions as points"),
@@ -135,7 +131,6 @@ DataExportDlg::DataExportDlg(wxWindow* parent, wxWindowID id, int f_count)
                    0, wxALL|wxALIGN_CENTER, 5);
     SetSizerAndFit(top_sizer);
 
-
     Connect(wxID_OK, wxEVT_COMMAND_BUTTON_CLICKED,
             wxCommandEventHandler(DataExportDlg::OnOk));
     Connect(list->GetId(), wxEVT_COMMAND_CHECKLISTBOX_TOGGLED,
@@ -171,8 +166,7 @@ void DataExportDlg::OnTextChanged(wxCommandEvent&)
     //    return;
     string s = wx2s(text->GetValue());
     size_t colon = s.find(':');
-    bool parsable = ftk->ui()->check_syntax("print " + s) &&
-                     colon != string::npos;
+    bool parsable = (ftk->check_syntax("print " + s) && colon != string::npos);
     FindWindow(wxID_OK)->Enable(parsable);
     if (parsable) {
         only_a_cb->SetValue(s.substr(0, colon) == "if a");
@@ -188,5 +182,83 @@ void DataExportDlg::OnOk(wxCommandEvent& event)
 {
     wxConfig::Get()->Write(wxT("/exportPoints"), text->GetValue());
     event.Skip();
+}
+
+
+void exec_redirected_command(const vector<int>& sel,
+                             const string& cmd, const wxString& path)
+{
+    if (sel.size() == 1) {
+        exec("@" + S(sel[0]) + ": " + cmd + " > '" + wx2s(path) + "'");
+        return;
+    }
+    string datasets;
+    if (ftk->dk.count() == (int) sel.size())
+        datasets = "@*";
+    else
+        datasets = "@" + join_vector(sel, " @");
+    if (wxFileExists(path))
+        exec("delete file '" + wx2s(path) + "'");
+    exec(datasets + ": " + cmd + " >> '" + wx2s(path) + "'");
+}
+
+static
+wxString get_default_name(const vector<int>& sel, const char* ext)
+{
+    if (sel.size() == 1) {
+        const string& filename = ftk->dk.data(sel[0])->get_filename();
+        if (!filename.empty())
+            return wxFileName(s2wx(filename)).GetName() + ext;
+    }
+    return "";
+}
+
+/// show "Export data" dialog
+void export_data_dlg(const vector<int>& sel, wxWindow *parent,
+                     wxString *export_dir)
+{
+    int f_count = 0;
+    if (sel.size() == 1) {
+        f_count = ftk->dk.get_model(sel[0])->get_ff().names.size();
+    }
+
+    DataExportDlg ded(parent, -1, f_count);
+    if (ded.ShowModal() != wxID_OK)
+        return;
+
+    wxFileDialog fdlg(parent, "Export data to file", *export_dir,
+                      get_default_name(sel, ".dat"),
+                      "x y data (*.dat, *.xy)|*.dat;*.DAT;*.xy;*.XY",
+                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (fdlg.ShowModal() == wxID_OK)
+        exec_redirected_command(sel, "print " + ded.get_text(), fdlg.GetPath());
+    *export_dir = fdlg.GetDirectory();
+}
+
+static
+wxWindow* peakparam_extra(wxWindow* parent)
+{
+    return new ExtraCheckBox(parent, "include standard errors", false);
+}
+
+void export_peak_parameters(const vector<int>& sel, wxWindow *parent,
+                            wxString *export_dir)
+{
+    wxFileDialog fdlg(parent, "Export parameters to file", *export_dir,
+                      get_default_name(sel, ".peaks"),
+                      "parameters of functions (*.peaks)|*.peaks|all files|*",
+                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    // on wxOSX/Carbon SetExtraControlCreator() is unreliable
+#ifndef __WXOSX_CARBON__
+    fdlg.SetExtraControlCreator(&peakparam_extra);
+#endif
+    if (fdlg.ShowModal() == wxID_OK) {
+        wxWindow *extra = fdlg.GetExtraControl();
+        if (extra != NULL && wxDynamicCast(extra,ExtraCheckBox)->is_checked())
+            exec_redirected_command(sel, "info peaks_err", fdlg.GetPath());
+        else
+            exec_redirected_command(sel, "info peaks", fdlg.GetPath());
+    }
+    *export_dir = fdlg.GetDirectory();
 }
 

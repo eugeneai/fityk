@@ -4,7 +4,7 @@
 
 #include <wx/wx.h>
 
-#include "fancyrc.h"
+#include "parpan.h"
 #include "cmn.h" //KFTextCtrl
 
 #include "img/lock.xpm"
@@ -239,6 +239,13 @@ void ParameterPanel::finalize_changes()
     active_item_ = -1;
 }
 
+void ParameterPanel::change_parameter_value(int idx, double value)
+{
+    if (idx < get_count())
+        set_value(idx, value);
+}
+
+
 double ParameterPanel::get_value(int n) const
 {
     //double d;
@@ -402,13 +409,13 @@ int ParameterPanel::find_in_rows(wxObject* w)
     for (int n = 0; n != get_count(); ++n)
         if (w == rows_[n].text || w == rows_[n].lock || w == rows_[n].arm)
             return n;
-    assert(0);
-    return 0;
+    return -1;
 }
 
 void ParameterPanel::OnLockButton(wxCommandEvent& event)
 {
     int n = find_in_rows(event.GetEventObject());
+    if (n == -1) return;
     int old_state = rows_[n].lock->state();
     if (old_state != 2) {
         rows_[n].lock->set_state(old_state == 0 ? 1 : 0);
@@ -422,6 +429,7 @@ void ParameterPanel::OnLockButton(wxCommandEvent& event)
 void ParameterPanel::OnTextEnter(wxCommandEvent &event)
 {
     int n = find_in_rows(event.GetEventObject());
+    if (n == -1) return;
     wxTextCtrl *tc = rows_[n].text;
     if (tc->GetValue() == double2wxstr(values_[n]))
         return;
@@ -430,8 +438,7 @@ void ParameterPanel::OnTextEnter(wxCommandEvent &event)
     if (ok) {
         values_[n] = t;
         observer_->on_parameter_changed(n);
-    }
-    else
+    } else
         tc->ChangeValue(double2wxstr(values_[n]));
 }
 
@@ -445,6 +452,7 @@ void ParameterPanel::OnMouseWheel(wxMouseEvent &event)
     if (event.AltDown())
         change /= 20;
     int n = find_in_rows(event.GetEventObject());
+    if (n == -1) return;
     double new_value = values_[n] + fabs(values_[n]) * change;
     set_value(n, new_value);
     observer_->on_parameter_changed(n);

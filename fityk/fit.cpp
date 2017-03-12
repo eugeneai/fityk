@@ -1,12 +1,28 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
 #include "fit.h"
 
 #include <algorithm>
-#include <math.h>
-#include <string.h>
+#include <cmath>
+
+// Valgrind may not like the way boost::math::erfc_inv is initialized, see
+// https://svn.boost.org/trac/boost/ticket/10005
+// If you get:
+//  terminate called after throwing an instance of
+//  'boost::exception_detail::clone_impl<
+//     boost::exception_detail::error_info_injector<std::overflow_error> >'
+//   what():  Error in function boost::math::erfc_inv<e>(e, e): Overflow Error
+// try this ugly workaround.
+#ifdef VALGRIND_WORKAROUND
+#include <float.h>
+#undef LDBL_MAX_10_EXP
+// not very correct, but seems harmless - LDBL_MAX_10_EXP is not used much
+#define LDBL_MAX_10_EXP 799
+#include <boost/math/special_functions/erf.hpp>
+#endif
+
 #include <boost/math/distributions/students_t.hpp>
 
 #include "logic.h"
@@ -26,115 +42,82 @@ using namespace std;
 
 namespace fityk {
 
-Fit::Fit(Ftk *F, const string& m)
+int count_points(const vector<Data*>& datas)
+{
+    int n = 0;
+    v_foreach (Data*, i, datas)
+        n += (*i)->get_n();
+    return n;
+}
+
+Fit::Fit(Full *F, const string& m)
     : name(m), F_(F),
-      evaluations_(0), iter_nr_(0), na_(0), last_refresh_time_(0)
+      evaluations_(0), na_(0), last_refresh_time_(0)
 {
 }
 
 /// dof = degrees of freedom = (number of points - number of parameters)
-int Fit::get_dof(const vector<DataAndModel*>& dms)
+int Fit::get_dof(const vector<Data*>& datas)
 {
-    update_parameters(dms);
-    int dof = 0;
-    v_foreach (DataAndModel*, i, dms)
-        dof += (*i)->data()->get_n();
-    dof -= count(par_usage_.begin(), par_usage_.end(), true);
-    return dof;
+    update_par_usage(datas);
+    int used_parameters = count(par_usage_.begin(), par_usage_.end(), true);
+    return count_points(datas) - used_parameters;
 }
 
-string Fit::get_goodness_info(const vector<DataAndModel*>& dms)
+string Fit::get_goodness_info(const vector<Data*>& datas)
 {
     const SettingsMgr *sm = F_->settings_mgr();
     const vector<realt>& pp = F_->mgr.parameters();
-    int dof = get_dof(dms);
-    //update_parameters(dms);
-    realt wssr = do_compute_wssr(pp, dms, true);
+    int dof = get_dof(datas);
+    //update_par_usage(datas);
+    realt wssr = compute_wssr(pp, datas, true);
     return "WSSR=" + sm->format_double(wssr)
            + "  DoF=" + S(dof)
            + "  WSSR/DoF=" + sm->format_double(wssr/dof)
-           + "  SSR=" + sm->format_double(do_compute_wssr(pp, dms, false))
-           + "  R2=" + sm->format_double(compute_r_squared(pp, dms));
+           + "  SSR=" + sm->format_double(compute_wssr(pp, datas, false))
+           + "  R2=" + sm->format_double(compute_r_squared(pp, datas));
 }
 
-vector<realt> Fit::get_covariance_matrix(const vector<DataAndModel*>& dms)
+vector<double> Fit::get_covariance_matrix(const vector<Data*>& datas)
 {
-    const vector<realt> &pp = F_->mgr.parameters();
-    update_parameters(dms);
-
-    vector<realt> alpha(na_*na_), beta(na_);
-    compute_derivatives(pp, dms, alpha, beta);
-
-    // To avoid singular matrix, put fake values corresponding to unused
-    // parameters.
-    for (int i = 0; i < na_; ++i)
-        if (!par_usage_[i]) {
-            alpha[i*na_ + i] = 1.;
-        }
-    // We may have unused parameters with par_usage_[] set true,
-    // e.g. SplitGaussian with center < min(active x) will have hwhm1 unused.
-    // If i'th column/row in alpha are only zeros, we must
-    // do something about it -- standard error is undefined
-    vector<int> undef;
-    for (int i = 0; i < na_; ++i) {
-        bool has_nonzero = false;
-        for (int j = 0; j < na_; j++)
-            if (alpha[na_*i+j] != 0.) {
-                has_nonzero = true;
-                break;
-            }
-        if (!has_nonzero) {
-            undef.push_back(i);
-            alpha[i*na_ + i] = 1.;
-        }
-    }
-
-    reverse_matrix(alpha, na_);
-
-    v_foreach (int, i, undef)
-        alpha[(*i)*na_ + (*i)] = 0.;
-
-    return alpha;
+    update_par_usage(datas);
+    return MPfit(F_, "").get_covariance_matrix(datas);
 }
 
-vector<realt> Fit::get_standard_errors(const vector<DataAndModel*>& dms)
+vector<double> Fit::get_standard_errors(const vector<Data*>& datas)
 {
-    const vector<realt> &pp = F_->mgr.parameters();
-    realt wssr = do_compute_wssr(pp, dms, true);
-    int dof = get_dof(dms);
-    vector<realt> alpha = get_covariance_matrix(dms);
-    // `na_' was set by functions above
-    vector<realt> errors(na_);
-    for (int i = 0; i < na_; ++i)
-        errors[i] = sqrt(wssr / dof * alpha[i*na_ + i]);
-    return errors;
+    update_par_usage(datas);
+    return MPfit(F_, "").get_standard_errors(datas);
 }
 
-vector<realt> Fit::get_confidence_limits(const vector<DataAndModel*>& dms,
-                                         double level_percent)
+vector<double> Fit::get_confidence_limits(const vector<Data*>& datas,
+                                          double level_percent)
 {
-    vector<realt> v = get_standard_errors(dms);
-    int dof = get_dof(dms);
+    vector<double> v = get_standard_errors(datas);
+    int dof = get_dof(datas);
     double level = 1. - level_percent / 100.;
+    // If Fityk run under valgrind gives
+    //  Error in function boost::math::erfc_inv<e>(e, e): Overflow Error
+    // see VALGRIND_WORKAROUND above.
     boost::math::students_t dist(dof);
     double t = boost::math::quantile(boost::math::complement(dist, level/2));
-    vm_foreach (realt, i, v)
+    vm_foreach (double, i, v)
         *i *= t;
     return v;
 }
 
-string Fit::get_cov_info(const vector<DataAndModel*>& dms)
+string Fit::get_cov_info(const vector<Data*>& datas)
 {
     string s;
     const SettingsMgr *sm = F_->settings_mgr();
-    vector<realt> alpha = get_covariance_matrix(dms);
+    vector<double> alpha = get_covariance_matrix(datas);
     s += "\nCovariance matrix\n    ";
     for (int i = 0; i < na_; ++i)
         if (par_usage_[i])
-            s += "\t$" + F_->mgr.find_variable_handling_param(i)->name;
+            s += "\t$" + F_->mgr.gpos_to_var(i)->name;
     for (int i = 0; i < na_; ++i) {
         if (par_usage_[i]) {
-            s += "\n$" + F_->mgr.find_variable_handling_param(i)->name;
+            s += "\n$" + F_->mgr.gpos_to_var(i)->name;
             for (int j = 0; j < na_; ++j) {
                 if (par_usage_[j])
                     s += "\t" + sm->format_double(alpha[na_*i + j]);
@@ -149,47 +132,46 @@ int Fit::compute_deviates(const vector<realt> &A, double *deviates)
     ++evaluations_;
     F_->mgr.use_external_parameters(A); //that's the only side-effect
     int ntot = 0;
-    v_foreach (DataAndModel*, i, dmdm_)
+    v_foreach (Data*, i, fitted_datas_)
         ntot += compute_deviates_for_data(*i, deviates + ntot);
     return ntot;
 }
 
 //static
-int Fit::compute_deviates_for_data(const DataAndModel* dm, double *deviates)
+int Fit::compute_deviates_for_data(const Data* data, double *deviates)
 {
-    const Data* data = dm->data();
     int n = data->get_n();
     vector<realt> xx = data->get_xx();
     vector<realt> yy(n, 0.);
-    dm->model()->compute_model(xx, yy);
+    data->model()->compute_model(xx, yy);
     for (int j = 0; j < n; ++j)
         deviates[j] = (data->get_y(j) - yy[j]) / data->get_sigma(j);
     return n;
 }
 
 
-realt Fit::do_compute_wssr(const vector<realt> &A,
-                           const vector<DataAndModel*>& dms,
-                           bool weigthed)
+realt Fit::compute_wssr(const vector<realt> &A,
+                        const vector<Data*>& datas,
+                        bool weigthed)
 {
     realt wssr = 0;
     F_->mgr.use_external_parameters(A); //that's the only side-effect
-    v_foreach (DataAndModel*, i, dms) {
+    v_foreach (Data*, i, datas) {
         wssr += compute_wssr_for_data(*i, weigthed);
     }
+    ++evaluations_;
     return wssr;
 }
 
 //static
-realt Fit::compute_wssr_for_data(const DataAndModel* dm, bool weigthed)
+realt Fit::compute_wssr_for_data(const Data* data, bool weigthed)
 {
-    const Data* data = dm->data();
     int n = data->get_n();
     vector<realt> xx = data->get_xx();
     vector<realt> yy(n, 0.);
-    dm->model()->compute_model(xx, yy);
-    // use here always long double, because it does not effect (much)
-    // the efficiency and it notably increases accuracy of results
+    data->model()->compute_model(xx, yy);
+    // using long double, because it does not effect (much) the efficiency
+    // and notably increases the accuracy of WSSR.
     // If better accuracy is needed, Kahan summation algorithm could be used.
     long double wssr = 0;
     for (int j = 0; j < n; j++) {
@@ -203,11 +185,11 @@ realt Fit::compute_wssr_for_data(const DataAndModel* dm, bool weigthed)
 
 // R^2 for multiple datasets is calculated with separate mean y for each dataset
 realt Fit::compute_r_squared(const vector<realt> &A,
-                             const vector<DataAndModel*>& dms)
+                             const vector<Data*>& datas)
 {
     realt sum_err = 0, sum_tot = 0, se = 0, st = 0;
     F_->mgr.use_external_parameters(A);
-    v_foreach (DataAndModel*, i, dms) {
+    v_foreach (Data*, i, datas) {
         compute_r_squared_for_data(*i, &se, &st);
         sum_err += se;
         sum_tot += st;
@@ -216,14 +198,13 @@ realt Fit::compute_r_squared(const vector<realt> &A,
 }
 
 //static
-realt Fit::compute_r_squared_for_data(const DataAndModel* dm,
+realt Fit::compute_r_squared_for_data(const Data* data,
                                       realt* sum_err, realt* sum_tot)
 {
-    const Data* data = dm->data();
     int n = data->get_n();
     vector<realt> xx = data->get_xx();
     vector<realt> yy(n, 0.);
-    dm->model()->compute_model(xx, yy);
+    data->model()->compute_model(xx, yy);
     realt ysum = 0;
     realt ss_err = 0; // Sum of squares of dist. between fitted curve and data
     for (int j = 0; j < n; j++) {
@@ -251,7 +232,7 @@ realt Fit::compute_r_squared_for_data(const DataAndModel* dm,
 
 //results in alpha and beta
 void Fit::compute_derivatives(const vector<realt> &A,
-                              const vector<DataAndModel*>& dms,
+                              const vector<Data*>& datas,
                               vector<realt>& alpha, vector<realt>& beta)
 {
     assert (size(A) == na_ && size(alpha) == na_ * na_ && size(beta) == na_);
@@ -259,7 +240,7 @@ void Fit::compute_derivatives(const vector<realt> &A,
     fill(beta.begin(), beta.end(), 0.0);
 
     F_->mgr.use_external_parameters(A);
-    v_foreach (DataAndModel*, i, dms) {
+    v_foreach (Data*, i, datas) {
         compute_derivatives_for(*i, alpha, beta);
     }
     // filling second half of alpha[]
@@ -270,26 +251,39 @@ void Fit::compute_derivatives(const vector<realt> &A,
 
 //results in alpha and beta
 //it computes only half of alpha matrix
-void Fit::compute_derivatives_for(const DataAndModel* dm,
+void Fit::compute_derivatives_for(const Data* data,
                                   vector<realt>& alpha, vector<realt>& beta)
 {
-    const Data* data = dm->data();
-    int n = data->get_n();
-    vector<realt> xx = data->get_xx();
-    vector<realt> yy(n, 0.);
-    const int dyn = na_+1;
-    vector<realt> dy_da(n*dyn, 0.);
-    dm->model()->compute_model_with_derivs(xx, yy, dy_da);
-    for (int i = 0; i != n; i++) {
-        realt inv_sig = 1.0 / data->get_sigma(i);
-        realt dy_sig = (data->get_y(i) - yy[i]) * inv_sig;
-        vector<realt>::iterator t = dy_da.begin() + i*dyn;
-        for (int j = 0; j != na_; ++j) {
-            if (par_usage_[j]) {
-                *(t+j) *= inv_sig;
-                for (int k = 0; k <= j; ++k)    //half of alpha[]
-                    alpha[na_ * j + k] += *(t+j) * *(t+k);
-                beta[j] += dy_sig * *(t+j);
+    // Iterating over points is tiled to limit memory usage. It's also a little
+    // faster than a single loop over all points for large number of points.
+    const int kMaxTileSize = 1024;
+    vector<realt> dy_da;
+    for (int tstart = 0; tstart < data->get_n(); tstart += kMaxTileSize) {
+        const int dyn = na_+1;
+        int tsize = min(data->get_n() - tstart, kMaxTileSize);
+        vector<realt> xx(tsize);
+        for (int j = 0; j != tsize; ++j)
+            xx[j] = data->get_x(tstart+j);
+        vector<realt> yy(tsize, 0.);
+        dy_da.resize(tsize*dyn);
+        fill(dy_da.begin(), dy_da.end(), 0.);
+        data->model()->compute_model_with_derivs(xx, yy, dy_da);
+        for (int i = 0; i != tsize; ++i) {
+            realt inv_sig = 1.0 / data->get_sigma(tstart+i);
+            realt dy_sig = (data->get_y(tstart+i) - yy[i]) * inv_sig;
+            vector<realt>::iterator t = dy_da.begin() + i*dyn;
+            // The program spends here a lot of time.
+            // Testing on GCC 4.8 with -O3 on x64 i7 processor:
+            //  the first loop (j) is faster when iterating upward,
+            //  and the other one (k) is faster downward.
+            // Removing par_usage_ only slows down this loop (!?).
+            for (int j = 0; j != na_; ++j) {
+                if (par_usage_[j] && *(t+j) != 0) {
+                    *(t+j) *= inv_sig;
+                    for (int k = j; k != -1; --k)    //half of alpha[]
+                        alpha[na_ * j + k] += *(t+j) * *(t+k);
+                    beta[j] += dy_sig * *(t+j);
+                }
             }
         }
     }
@@ -297,27 +291,26 @@ void Fit::compute_derivatives_for(const DataAndModel* dm,
 
 // similar to compute_derivatives(), but adjusted for MPFIT interface
 void Fit::compute_derivatives_mp(const vector<realt> &A,
-                                 const vector<DataAndModel*>& dms,
+                                 const vector<Data*>& datas,
                                  double **derivs, double *deviates)
 {
     ++evaluations_;
     F_->mgr.use_external_parameters(A);
     int ntot = 0;
-    v_foreach (DataAndModel*, i, dms) {
+    v_foreach (Data*, i, datas) {
         ntot += compute_derivatives_mp_for(*i, ntot, derivs, deviates);
     }
 }
 
-int Fit::compute_derivatives_mp_for(const DataAndModel* dm, int offset,
+int Fit::compute_derivatives_mp_for(const Data* data, int offset,
                                     double **derivs, double *deviates)
 {
-    const Data* data = dm->data();
     int n = data->get_n();
     vector<realt> xx = data->get_xx();
     vector<realt> yy(n, 0.);
     const int dyn = na_+1;
     vector<realt> dy_da(n*dyn, 0.);
-    dm->model()->compute_model_with_derivs(xx, yy, dy_da);
+    data->model()->compute_model_with_derivs(xx, yy, dy_da);
     for (int i = 0; i != n; ++i)
         deviates[offset+i] = (data->get_y(i) - yy[i]) / data->get_sigma(i);
     for (int j = 0; j != na_; ++j)
@@ -328,29 +321,29 @@ int Fit::compute_derivatives_mp_for(const DataAndModel* dm, int offset,
 }
 
 // similar to compute_derivatives(), but adjusted for NLopt interface
-realt Fit::compute_derivatives_nl(const vector<realt> &A,
-                                  const vector<DataAndModel*>& dms,
-                                  double *grad)
+realt Fit::compute_wssr_gradient(const vector<realt> &A,
+                                 const vector<Data*>& datas,
+                                 double *grad)
 {
+    assert(size(A) == na_);
     ++evaluations_;
     F_->mgr.use_external_parameters(A);
     realt wssr = 0.;
     fill(grad, grad+na_, 0.0);
-    v_foreach (DataAndModel*, i, dms)
-        wssr += compute_derivatives_nl_for(*i, grad);
+    v_foreach (Data*, i, datas)
+        wssr += compute_wssr_gradient_for(*i, grad);
     return wssr;
 }
 
-realt Fit::compute_derivatives_nl_for(const DataAndModel* dm, double *grad)
+realt Fit::compute_wssr_gradient_for(const Data* data, double *grad)
 {
     realt wssr = 0;
-    const Data* data = dm->data();
     int n = data->get_n();
     vector<realt> xx = data->get_xx();
     vector<realt> yy(n, 0.);
     const int dyn = na_+1;
     vector<realt> dy_da(n*dyn, 0.);
-    dm->model()->compute_model_with_derivs(xx, yy, dy_da);
+    data->model()->compute_model_with_derivs(xx, yy, dy_da);
     for (int i = 0; i != n; i++) {
         realt sig = data->get_sigma(i);
         realt dy_sig = (data->get_y(i) - yy[i]) / sig;
@@ -362,64 +355,11 @@ realt Fit::compute_derivatives_nl_for(const DataAndModel* dm, double *grad)
     return wssr;
 }
 
-string Fit::print_matrix(const vector<realt>& vec, int m, int n,
-                         const char *mname)
-    //m rows, n columns
+realt Fit::draw_a_from_distribution(int gpos, char distribution, realt mult)
 {
-    if (F_->get_verbosity() <= 0)  //optimization (?)
-        return "";
-    assert (size(vec) == m * n);
-    soft_assert(!vec.empty());
-    string h = S(mname) + "={ ";
-    if (m == 1) { // vector
-        for (int i = 0; i < n; i++)
-            h += S(vec[i]) + (i < n - 1 ? ", " : " }") ;
-    }
-    else { //matrix
-        string blanks (strlen(mname) + 1, ' ');
-        for (int j = 0; j < m; j++){
-            if (j > 0)
-                h += blanks + "  ";
-            for (int i = 0; i < n; i++)
-                h += S(vec[j * n + i]) + ", ";
-            h += "\n";
-        }
-        h += blanks + "}";
-    }
-    return h;
-}
-
-bool Fit::post_fit(const vector<realt>& aa, realt chi2)
-{
-    double elapsed = (clock() - start_time_) / (double) CLOCKS_PER_SEC;
-    F_->msg(name + ": " + S(iter_nr_) + " iterations, "
-           + S(evaluations_) + " evaluations, "
-           + format1<double,16>("%.2f", elapsed) + " s. of CPU time.");
-    bool better = (chi2 < wssr_before_);
-    const SettingsMgr *sm = F_->settings_mgr();
-    if (better) {
-        F_->get_fit_container()->push_param_history(aa);
-        F_->mgr.put_new_parameters(aa);
-        double percent_change = (chi2 - wssr_before_) / wssr_before_ * 100.;
-        F_->msg("WSSR: " + sm->format_double(chi2) +
-                " (" + S(percent_change) + "%)");
-    }
-    else {
-        F_->msg("Better fit NOT found (WSSR = " + sm->format_double(chi2)
-                + ", was " + sm->format_double(wssr_before_) + ")."
-                "\nParameters NOT changed");
-        F_->mgr.use_external_parameters(a_orig_);
-        if (F_->get_settings()->fit_replot)
-            F_->ui()->draw_plot(UserInterface::kRepaintImmediately);
-    }
-    return better;
-}
-
-realt Fit::draw_a_from_distribution (int nr, char distribution, realt mult)
-{
-    assert (nr >= 0 && nr < na_);
-    if (!par_usage_[nr])
-        return a_orig_[nr];
+    assert (gpos >= 0 && gpos < na_);
+    if (!par_usage_[gpos])
+        return a_orig_[gpos];
     realt dv = 0;
     switch (distribution) {
         case 'g':
@@ -435,83 +375,80 @@ realt Fit::draw_a_from_distribution (int nr, char distribution, realt mult)
             dv = rand_1_1();
             break;
     }
-    return F_->mgr.variation_of_a(nr, dv * mult);
+    return F_->mgr.variation_of_a(gpos, dv * mult);
 }
 
 class ComputeUI
 {
 public:
-    ComputeUI(UserInterface *ui) : ui_(ui) { ui->hint_ui(0); }
-    ~ComputeUI() { ui_->hint_ui(1); }
+    ComputeUI(UserInterface *ui) : ui_(ui) { ui->hint_ui("busy", "1"); }
+    ~ComputeUI() { ui_->hint_ui("busy", ""); }
 private:
     UserInterface *ui_;
 };
 
-/// initialize and run fitting procedure for not more than max_iter iterations
-void Fit::fit(int max_iter, const vector<DataAndModel*>& dms)
+/// initialize and run fitting procedure for not more than max_eval evaluations
+void Fit::fit(int max_eval, const vector<Data*>& datas)
 {
+    // initialization
     start_time_ = clock();
     last_refresh_time_ = time(0);
     ComputeUI compute_ui(F_->ui());
-    update_parameters(dms);
-    dmdm_ = dms;
+    update_par_usage(datas);
+    fitted_datas_ = datas;
     a_orig_ = F_->mgr.parameters();
-    F_->get_fit_container()->push_param_history(a_orig_);
-    iter_nr_ = 0;
+    F_->fit_manager()->push_param_history(a_orig_);
     evaluations_ = 0;
-    fityk::user_interrupt = false;
-    init(); //method specific init
-    max_iterations_ = max_iter;
-
-    // print stats
+    fityk::user_interrupt = 0;
+    max_eval_ = (max_eval > 0 ? max_eval
+                              : F_->get_settings()->max_wssr_evaluations);
     int nu = count(par_usage_.begin(), par_usage_.end(), true);
-    int np = 0;
-    v_foreach (DataAndModel*, i, dms)
-        np += (*i)->data()->get_n();
-    F_->msg ("Fitting " + S(nu) + " (of " + S(na_) + ") parameters to "
-            + S(np) + " points ...");
+    F_->msg("Fitting " + S(nu) + " (of " + S(na_) + ") parameters to "
+            + S(count_points(datas)) + " points ...");
+    initial_wssr_ = compute_wssr(a_orig_, fitted_datas_);
+    best_shown_wssr_ = initial_wssr_;
+    const SettingsMgr *sm = F_->settings_mgr();
+    if (F_->get_verbosity() >= 1)
+        F_->ui()->mesg("Method: " + name + ". Initial WSSR="
+                       + sm->format_double(initial_wssr_));
 
-    autoiter();
+    // here the work is done
+    vector<realt> best_a;
+    realt wssr = run_method(&best_a);
+
+    // finalization
+    F_->msg(name + ": " + S(evaluations_) + " evaluations, "
+            + format1<double,16>("%.2f", elapsed()) + " s. of CPU time.");
+    if (wssr < initial_wssr_) {
+        F_->fit_manager()->push_param_history(best_a);
+        F_->mgr.put_new_parameters(best_a);
+        double percent_change = (wssr - initial_wssr_) / initial_wssr_ * 100.;
+        F_->msg("WSSR: " + sm->format_double(wssr) +
+                " (" + S(percent_change) + "%)");
+    } else {
+        F_->msg("Better fit NOT found (WSSR = " + sm->format_double(wssr)
+                + ", was " + sm->format_double(initial_wssr_) + ")."
+                "\nParameters NOT changed");
+        F_->mgr.use_external_parameters(a_orig_);
+        if (F_->get_settings()->fit_replot)
+            F_->ui()->draw_plot(UserInterface::kRepaintImmediately);
+    }
 }
 
-bool Fit::can_continue() const
-{
-    if (na_ != (int) F_->mgr.parameters().size())
-        return false;
-    v_foreach (DataAndModel*, i, dmdm_)
-        if (!contains_element(F_->get_dms(), *i))
-            return false;
-    return true;
-}
-
-/// run fitting procedure (without initialization)
-void Fit::continue_fit(int max_iter)
-{
-    start_time_ = clock();
-    last_refresh_time_ = time(0);
-    if (!can_continue())
-        throw ExecuteError(name + " method should be initialized first.");
-    update_parameters(dmdm_);
-    a_orig_ = F_->mgr.parameters();  //should it be also updated?
-    fityk::user_interrupt = false;
-    evaluations_ = 0;
-    max_iterations_ = max_iter;
-    autoiter();
-}
-
-void Fit::update_parameters(const vector<DataAndModel*>& dms)
+// sets na_ and par_usage_ based on F_->mgr and datas
+void Fit::update_par_usage(const vector<Data*>& datas)
 {
     if (F_->mgr.parameters().empty())
         throw ExecuteError("there are no fittable parameters.");
-    if (dms.empty())
+    if (datas.empty())
         throw ExecuteError("No datasets to fit.");
 
     na_ = F_->mgr.parameters().size();
 
     par_usage_ = vector<bool>(na_, false);
     for (int idx = 0; idx < na_; ++idx) {
-        int var_idx = F_->mgr.find_nr_var_handling_param(idx);
-        v_foreach (DataAndModel*, i, dms) {
+        int var_idx = F_->mgr.gpos_to_vpos(idx);
+        v_foreach (Data*, i, datas) {
             if ((*i)->model()->is_dependent_on_var(var_idx)) {
                 par_usage_[idx] = true;
                 break; //go to next idx
@@ -523,7 +460,7 @@ void Fit::update_parameters(const vector<DataAndModel*>& dms)
 }
 
 /// checks termination criteria common for all fitting methods
-bool Fit::common_termination_criteria(int iter, bool all)
+bool Fit::common_termination_criteria() const
 {
     bool stop = false;
     if (fityk::user_interrupt) {
@@ -531,20 +468,13 @@ bool Fit::common_termination_criteria(int iter, bool all)
         stop = true;
     }
     double max_time = F_->get_settings()->max_fitting_time;
-    if (max_time > 0 && clock() >= start_time_ + max_time * CLOCKS_PER_SEC) {
+    if (max_time > 0 && elapsed() >= max_time) {
         F_->msg("Maximum processor time exceeded.");
         stop = true;
     }
-    if (all) {
-        if (max_iterations_ >= 0 && iter >= max_iterations_) {
-            F_->msg("Maximum iteration number reached.");
-            stop = true;
-        }
-        int max_eval = F_->get_settings()->max_wssr_evaluations;
-        if (max_eval > 0 && evaluations_ >= max_eval) {
-            F_->msg("Maximum evaluations number reached.");
-            stop = true;
-        }
+    if (max_eval_ > 0 && evaluations_ >= max_eval_) {
+        F_->msg("Maximum evaluations number reached.");
+        stop = true;
     }
     return stop;
 }
@@ -558,92 +488,10 @@ void Fit::iteration_plot(const vector<realt> &A, realt wssr)
         F_->mgr.use_external_parameters(A);
         F_->ui()->draw_plot(UserInterface::kRepaintImmediately);
     }
-    double elapsed = (clock() - start_time_) / (double) CLOCKS_PER_SEC;
-    double percent_change = (wssr - wssr_before_) / wssr_before_ * 100.;
-    int max_eval = F_->get_settings()->max_wssr_evaluations;
-    F_->msg("Iter: " + S(iter_nr_) + "/"
-            + (max_iterations_ > 0 ? S(max_iterations_) : string("oo"))
-            + "  Eval: " + S(evaluations_) + "/"
-            + (max_eval > 0 ? S(max_eval) : string("oo"))
-            + "  WSSR=" + F_->settings_mgr()->format_double(wssr)
-            + " (" + S(percent_change)+ "%)"
-            + "  CPU time: " + format1<double,16>("%.2f", elapsed) + "s.");
-    F_->ui()->hint_ui(-1);
+    F_->msg(iteration_info(wssr) +
+            "  CPU time: " + format1<double,16>("%.2f", elapsed()) + "s.");
+    F_->ui()->hint_ui("yield", "");
     last_refresh_time_ = time(0);
-}
-
-
-/// This function solves a set of linear algebraic equations using
-/// Jordan elimination with partial pivoting.
-///
-/// A * x = b
-///
-/// A is n x n matrix, realt A[n*n]
-/// b is vector b[n],
-/// Function returns vector x[] in b[], and 1-matrix in A[].
-/// return value: true=OK, false=singular matrix
-///   with special exception:
-///     if i'th row, i'th column and i'th element in b all contains zeros,
-///     it's just ignored,
-void Fit::Jordan(vector<realt>& A, vector<realt>& b, int n)
-{
-    assert (size(A) == n*n && size(b) == n);
-    for (int i = 0; i < n; i++) {
-        realt amax = 0;                    // looking for a pivot element
-        int maxnr = -1;
-        for (int j = i; j < n; j++)
-            if (fabs (A[n*j+i]) > amax) {
-                maxnr = j;
-                amax = fabs (A[n * j + i]);
-            }
-        if (maxnr == -1) {    // singular matrix
-            // i-th column has only zeros.
-            // If it's the same about i-th row, and b[i]==0, let x[i]==0.
-            for (int j = i; j < n; j++)
-                if (A[n * i + j] || b[i]) {
-                    if (F_->get_verbosity() >= 1)
-                        F_->ui()->mesg(print_matrix(A, n, n, "A"));
-                    F_->msg(print_matrix(b, 1, n, "b"));
-                    throw ExecuteError("In iteration " + S(iter_nr_)
-                                       + ": trying to reverse singular matrix."
-                                        " Column " + S(i) + " is zeroed.");
-                }
-            continue; // x[i]=b[i], b[i]==0
-        }
-        if (maxnr != i) {                            // interchanging rows
-            for (int j = i; j < n; j++)
-                swap (A[n*maxnr+j], A[n*i+j]);
-            swap (b[i], b[maxnr]);
-        }
-        realt c = 1.0 / A[i*n+i];
-        for (int j = i; j < n; j++)
-            A[i*n+j] *= c;
-        b[i] *= c;
-        for (int k = 0; k < n; k++)
-            if (k != i) {
-                realt d = A[k * n + i];
-                for (int j = i; j < n; j++)
-                    A[k * n + j] -= A[i * n + j] * d;
-                b[k] -= b[i] * d;
-            }
-    }
-}
-
-/// A - matrix n x n; returns A^(-1) in A
-void Fit::reverse_matrix (vector<realt>&A, int n)
-{
-    //no need to optimize it
-    assert (size(A) == n*n);
-    vector<realt> A_result(n*n);
-    for (int i = 0; i < n; i++) {
-        vector<realt> A_copy = A;
-        vector<realt> v(n, 0);
-        v[i] = 1;
-        Jordan(A_copy, v, n);
-        for (int j = 0; j < n; j++)
-            A_result[j * n + i] = v[j];
-    }
-    A = A_result;
 }
 
 
@@ -657,82 +505,104 @@ void Fit::output_tried_parameters(const vector<realt>& a)
     F_->ui()->mesg(s);
 }
 
+double Fit::elapsed() const
+{
+    return (clock() - start_time_) / (double) CLOCKS_PER_SEC;
+}
+
+string Fit::iteration_info(realt wssr)
+{
+    const SettingsMgr *sm = F_->settings_mgr();
+    double last_change = (best_shown_wssr_ - wssr) / best_shown_wssr_ * 100;
+    double total_change = (initial_wssr_ - wssr) / initial_wssr_ * 100;
+    string first_char = " ";
+    if (wssr < best_shown_wssr_) {
+        best_shown_wssr_ = wssr;
+        first_char = "*";
+    }
+    return first_char + " eval: " + S(evaluations_) +
+           "/" + (max_eval_ > 0 ? S(max_eval_) : string("oo")) +
+           "  WSSR=" + sm->format_double(wssr) +
+           format1<double,32>("  (%+.3g%%,", last_change) +
+           format1<double,32>(" total %+.3g%%)", total_change) +
+           format1<double,16>("  CPU: %.2fs.", elapsed());
+}
+
 //-------------------------------------------------------------------
 
-// this list should be kept sync with to FitMethodsContainer ctor.
-const char* fit_method_enum[] = {
-    "levenberg_marquardt", // LMfit.cpp
-    "mpfit",               // MPfit.cpp
-    "nelder_mead_simplex", // NMfit.cpp
-    "genetic_algorithms",  // GAfit.cpp
+// keep sync with to FitManager ctor
+const char* FitManager::method_list[][3] =
+{
+ { "levenberg_marquardt", "Lev-Mar (own)", "Levenberg-Marquardt" },
+ { "mpfit", "Lev-Mar (from MPFIT)", "Levenberg-Marquardt" },
 #if HAVE_LIBNLOPT
-    "nlopt_mma",           // NLfit.cpp
-    "nlopt_slsqp",         // NLfit.cpp
-    "nlopt_lbfgs",         // NLfit.cpp
-    "nlopt_var2",          // NLfit.cpp
-    "nlopt_cobyla",        // NLfit.cpp
-    "nlopt_bobyqa",        // NLfit.cpp
-    "nlopt_nm",            // NLfit.cpp
-    "nlopt_sbplx",         // NLfit.cpp
+ { "nlopt_nm", "Nelder-Mead (from NLopt)","Nelder-Mead Simplex" },
+ { "nlopt_lbfgs", "BFGS (from NLopt)", "L-BFGS" },
+ { "nlopt_var2", "VAR2 (from NLopt)",
+                               "shifted limited-memory variable-metric" },
+ { "nlopt_praxis", "PRAXIS (from NLopt)", "principal-axis method" },
+ { "nlopt_bobyqa", "BOBYQA (from NLopt)",
+                               "Bound Optimization BY Quadratic Approx." },
+ { "nlopt_sbplx", "Sbplx (from NLopt)", "(based on Subplex)" },
+ //{ "nlopt_crs2", "CRS2 (from NLopt)", "Controlled Random Search" },
+ //{ "nlopt_slsqp", "SLSQP (from NLopt)", "sequential quadratic programming" },
+ //{ "nlopt_mma", "MMA (from NLopt)", "Method of Moving Asymptotes" },
+ //{ "nlopt_cobyla", "COBYLA (from NLopt)",
+ //                            "Constrained Optimization BY Linear Approx." },
 #endif
-    NULL
+ { "nelder_mead_simplex", "Nelder-Mead Simplex", "(own implementation)" },
+ { "genetic_algorithms", "Genetic Algorithm", "(not really maintained)" },
+ { NULL, NULL }
 };
 
-FitMethodsContainer::FitMethodsContainer(Ftk *F_)
-    : ParameterHistoryMgr(F_), dirty_error_cache_(true)
+
+FitManager::FitManager(Full *F)
+    : ParameterHistoryMgr(F), dirty_error_cache_(true)
 
 {
-    // these methods correspond to fit_method_enum[]
-    methods_.push_back(new LMfit(F_, fit_method_enum[0]));
-    methods_.push_back(new MPfit(F_, fit_method_enum[1]));
-    methods_.push_back(new NMfit(F_, fit_method_enum[2]));
-    methods_.push_back(new GAfit(F_, fit_method_enum[3]));
+    // these methods correspond to method_list[]
+    methods_.push_back(new LMfit(F, next_method()));
+    methods_.push_back(new MPfit(F, next_method()));
 #if HAVE_LIBNLOPT
-    methods_.push_back(new NLfit(F_, fit_method_enum[4], NLOPT_LD_MMA));
-    methods_.push_back(new NLfit(F_, fit_method_enum[5], NLOPT_LD_SLSQP));
-    methods_.push_back(new NLfit(F_, fit_method_enum[6], NLOPT_LD_LBFGS));
-    methods_.push_back(new NLfit(F_, fit_method_enum[7], NLOPT_LD_VAR2));
-    methods_.push_back(new NLfit(F_, fit_method_enum[8], NLOPT_LN_COBYLA));
-    methods_.push_back(new NLfit(F_, fit_method_enum[9], NLOPT_LN_BOBYQA));
-    methods_.push_back(new NLfit(F_, fit_method_enum[10], NLOPT_LN_NELDERMEAD));
-    methods_.push_back(new NLfit(F_, fit_method_enum[11], NLOPT_LN_SBPLX));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LN_NELDERMEAD));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LD_LBFGS));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LD_VAR2));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LN_PRAXIS));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LN_BOBYQA));
+    methods_.push_back(new NLfit(F, next_method(), NLOPT_LN_SBPLX));
+    //methods_.push_back(new NLfit(F, next_method(), NLOPT_LD_MMA));
+    //methods_.push_back(new NLfit(F, next_method(), NLOPT_LD_SLSQP));
+    //methods_.push_back(new NLfit(F, next_method(), NLOPT_LN_COBYLA));
+    //methods_.push_back(new NLfit(F, next_method(), NLOPT_GN_CRS2_LM));
 #endif
+    methods_.push_back(new NMfit(F, next_method()));
+    methods_.push_back(new GAfit(F, next_method()));
 }
 
 
-const char* FitMethodsContainer::full_method_names[][2] =
-{
-    { "Levenberg-Marquardt",     "gradient based method" },
-    { "MPFIT (another Lev-Mar)", "alternative Lev-Mar implementation" },
-    { "Nelder-Mead Simplex",     "slow but simple and reliable method" },
-    { "Genetic Algorithm",       "not really maintained" },
-#if HAVE_LIBNLOPT
-    { "MMA (from NLopt)",        "Method of Moving Asymptotes" },
-    { "SLSQP (from NLopt)",      "sequential quadratic programming" },
-    { "BFGS (from NLopt)",       "L-BFGS" },
-    { "VAR2 (from NLopt)",       "shifted limited-memory variable-metric" },
-    { "COBYLA (from NLopt)",     "Constrained Optimization BY Linear Approx." },
-    { "BOBYQA (from NLopt)",     "Bound Optimization BY Quadratic Approx." },
-    { "Nelder-Mead (from NLopt)","Nelder-Mead Simplex" },
-    { "Sbplx (from NLopt)",      "(based on Subplex)" },
-#endif
-    { NULL, NULL }
-};
-
-FitMethodsContainer::~FitMethodsContainer()
+FitManager::~FitManager()
 {
     purge_all_elements(methods_);
 }
 
-realt FitMethodsContainer::get_standard_error(const Variable* var) const
+Fit* FitManager::get_method(const string& name) const
+{
+    v_foreach(Fit*, i, methods_)
+        if ((*i)->name == name)
+            return *i;
+    throw ExecuteError("fitting method `" + name + "' not available.");
+    return NULL; // avoid compiler warning
+}
+
+double FitManager::get_standard_error(const Variable* var) const
 {
     if (!var->is_simple())
         return -1.; // value signaling unknown standard error
     if (dirty_error_cache_
             || errors_cache_.size() != F_->mgr.parameters().size()) {
-        errors_cache_ = F_->get_fit()->get_standard_errors(F_->get_dms());
+        errors_cache_ = F_->get_fit()->get_standard_errors(F_->dk.datas());
     }
-    return errors_cache_[var->get_nr()];
+    return errors_cache_[var->gpos()];
 }
 
 /// loads vector of parameters from the history
@@ -770,8 +640,7 @@ bool ParameterHistoryMgr::push_param_history(const vector<realt>& aa)
         param_history_.push_back(aa);
         ++param_hist_ptr_;
         return true;
-    }
-    else
+    } else
         return false;
 }
 

@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 /// class SideBar
@@ -6,9 +6,10 @@
 #include <wx/wx.h>
 #include <wx/imaglist.h>
 #include <wx/tglbtn.h>
+#include <wx/filename.h>
 
 #include "sidebar.h"
-#include "fancyrc.h"
+#include "parpan.h"
 #include "listptxt.h"
 #include "gradient.h"
 #include "cmn.h" //SpinCtrl, ProportionalSplitter, change_color_dlg, ...
@@ -27,7 +28,6 @@
 #include "img/close.xpm"
 #include "img/colorsel.xpm"
 #include "img/editf.xpm"
-#include "img/filter.xpm"
 #include "img/shiftup.xpm"
 #include "img/dpsize.xpm"
 //#include "img/convert.xpm"
@@ -76,6 +76,7 @@ enum {
 //                           SideBar
 //===============================================================
 
+static
 void add_bitmap_button(wxWindow* parent, wxWindowID id, const char** xpm,
                        wxString const& tip, wxSizer* sizer)
 {
@@ -85,6 +86,7 @@ void add_bitmap_button(wxWindow* parent, wxWindowID id, const char** xpm,
 }
 
 // wxToggleBitmapButton was added in 2.9. We use wxToggleButton instead
+static
 void add_toggle_bitmap_button(wxWindow* parent, wxWindowID id,
                               wxString const& /*label*/, const wxBitmap& bmp,
                               wxString const& tip, wxSizer* sizer)
@@ -136,7 +138,7 @@ END_EVENT_TABLE()
 
 SideBar::SideBar(wxWindow *parent, wxWindowID id)
     : ProportionalSplitter(parent, id, 0.75),
-      pp_func(NULL), active_function(-1),
+      pp_func_(NULL), active_function_(-1),
       skipOnFuncFocusChanged_(false)
 {
     //wxPanel *upper = new wxPanel(this, -1);
@@ -144,9 +146,9 @@ SideBar::SideBar(wxWindow *parent, wxWindowID id)
     nb = new wxNotebook(this, -1);
     //upper_sizer->Add(nb, 1, wxEXPAND);
     //upper->SetSizerAndFit(upper_sizer);
-    param_panel = new ParameterPanel(this, -1, this);
-    param_panel->set_key_sink(frame, wxKeyEventHandler(FFrame::focus_input));
-    SplitHorizProp(nb, param_panel);
+    param_panel_ = new ParameterPanel(this, -1, this);
+    param_panel_->set_key_sink(frame, wxKeyEventHandler(FFrame::focus_input));
+    SplitHorizProp(nb, param_panel_);
 
     //-----  data page  -----
     data_page = new wxPanel(nb, -1);
@@ -217,17 +219,6 @@ SideBar::SideBar(wxWindow *parent, wxWindowID id)
     func_page = new wxPanel(nb, -1);
     wxBoxSizer *func_sizer = new wxBoxSizer(wxVERTICAL);
 
-    wxBoxSizer *func_filter_sizer = new wxBoxSizer(wxHORIZONTAL);
-    func_filter_sizer->Add(new wxStaticBitmap(func_page, -1,
-                                              wxBitmap(filter_xpm)),
-                           0, wxALIGN_CENTER_VERTICAL);
-    filter_ch = new wxChoice(func_page, ID_FP_FILTER,
-                             wxDefaultPosition, wxDefaultSize, 0, 0);
-    filter_ch->Append(wxT("list all functions"));
-    filter_ch->Select(0);
-    func_filter_sizer->Add(filter_ch, 1, wxEXPAND);
-    func_sizer->Add(func_filter_sizer, 0, wxEXPAND);
-
     vector<pair<string,int> > fdata;
     fdata.push_back( pair<string,int>("Name", 54) );
     fdata.push_back( pair<string,int>("Type", 80) );
@@ -296,7 +287,7 @@ void SideBar::OnDataButtonDup (wxCommandEvent&)
 void SideBar::OnDataButtonRen (wxCommandEvent&)
 {
     int n = get_focused_data();
-    fityk::Data *data = ftk->get_data(n);
+    fityk::Data *data = ftk->dk.data(n);
     wxString old_title = s2wx(data->get_title());
 
     wxString s = wxGetTextFromUser(
@@ -316,18 +307,15 @@ void SideBar::delete_selected_items()
     vector<string> elems;
     if (txt == "data") {
         elems = d->get_selected_data();
-    }
-    else if (txt == "functions") {
+    } else if (txt == "functions") {
         elems = get_selected_func();
         vm_foreach (string, i, elems)
             *i = "%" + *i;
-    }
-    else if (txt == "variables") {
+    } else if (txt == "variables") {
         elems = get_selected_vars();
         vm_foreach (string, i, elems)
             *i = "$" + *i;
-    }
-    else
+    } else
         assert(0);
     exec("delete " + join_vector(elems, ", "));
 }
@@ -335,14 +323,14 @@ void SideBar::delete_selected_items()
 void SideBar::OnDataButtonCopyF (wxCommandEvent&)
 {
     int n = get_focused_data();
-    if (n+1 >= ftk->get_dm_count())
+    if (n+1 >= ftk->dk.count())
         return;
     d->list->Select(n, false);
     d->list->Select(n+1, true);
     d->list->Focus(n+1);
     string cmd = "@" + S(n+1) + ".F=copy(@" + S(n) + ".F)";
-    if (!ftk->get_model(n)->get_zz().names.empty()
-            || !ftk->get_model(n+1)->get_zz().names.empty())
+    if (!ftk->dk.get_model(n)->get_zz().names.empty()
+            || !ftk->dk.get_model(n+1)->get_zz().names.empty())
         cmd += "; @" + S(n+1) + ".Z=copy(@" + S(n) + ".Z)";
     if (ftk->mgr.find_function_nr("bg" + S(n)) != -1)
         cmd += "; %bg" + S(n+1) + "=copy(%bg" + S(n) + ")";
@@ -363,8 +351,7 @@ void SideBar::OnDataButtonCol (wxCommandEvent&)
             update_lists();
             frame->plot_pane()->refresh_plots(false, kMainPlot);
         }
-    }
-    else {//sel_size > 1
+    } else {//sel_size > 1
         int first_sel = d->list->GetFirstSelected();
         int last_sel = 0;
         for (int i = first_sel; i != -1; i = d->list->GetNextSelected(i))
@@ -448,10 +435,10 @@ void SideBar::OnFuncButtonNew (wxCommandEvent&)
 
 void SideBar::OnFuncButtonEdit (wxCommandEvent&)
 {
-    if (!pp_func)
+    if (!pp_func_)
         return;
-    string t = pp_func->get_current_assignment(ftk->mgr.variables(),
-                                               ftk->mgr.parameters());
+    string t = pp_func_->get_current_assignment(ftk->mgr.variables(),
+                                                ftk->mgr.parameters());
     frame->edit_in_input(t);
 }
 
@@ -463,9 +450,9 @@ void SideBar::OnFuncButtonChType (wxCommandEvent&)
 void SideBar::OnFuncButtonCol (wxCommandEvent&)
 {
     vector<int> const& ffi
-        = ftk->get_model(frame->get_focused_data_index())->get_ff().idx;
+        = ftk->dk.get_model(frame->get_focused_data_index())->get_ff().idx;
     vector<int>::const_iterator in_ff = find(ffi.begin(), ffi.end(),
-                                                         active_function);
+                                                         active_function_);
     if (in_ff == ffi.end())
         return;
     int color_id = in_ff - ffi.begin();
@@ -539,52 +526,39 @@ void SideBar::update_func_list(bool nondata_changed)
     MainPlot const* mplot = frame->get_main_plot();
     wxColour const& bg_col = mplot->get_bg_color();
 
-    //functions filter
-    while ((int) filter_ch->GetCount() > ftk->get_dm_count() + 1)
-        filter_ch->Delete(filter_ch->GetCount()-1);
-    for (int i = filter_ch->GetCount() - 1; i < ftk->get_dm_count(); ++i)
-        filter_ch->Append(wxString::Format(wxT("only functions from @%i"), i));
-
     //functions
     static vector<int> func_col_id;
     static int old_func_size;
     vector<string> func_data;
     vector<int> new_func_col_id;
-    Model const* model = ftk->get_model(frame->get_focused_data_index());
-    // if filter is selected, only functions in `filter_model' are listed
-    Model const* filter_model = NULL;
-    if (filter_ch->GetSelection() > 0)
-        filter_model = ftk->get_model(filter_ch->GetSelection()-1);
+    Model const* model = ftk->dk.get_model(frame->get_focused_data_index());
     int func_size = ftk->mgr.functions().size();
-    if (active_function == -1)
-        active_function = func_size - 1;
+    if (active_function_ == -1)
+        active_function_ = func_size - 1;
     else {
-        if (active_function >= func_size ||
-                ftk->mgr.get_function(active_function) != pp_func)
-            active_function = ftk->mgr.find_function_nr(active_function_name);
-        if (active_function == -1 || func_size == old_func_size+1)
-            active_function = func_size - 1;
+        if (active_function_ >= func_size ||
+                ftk->mgr.get_function(active_function_) != pp_func_)
+            active_function_ = ftk->mgr.find_function_nr(active_function_name_);
+        if (active_function_ == -1 || func_size == old_func_size+1)
+            active_function_ = func_size - 1;
     }
-    if (active_function != -1)
-        active_function_name = ftk->mgr.get_function(active_function)->name;
+    if (active_function_ != -1)
+        active_function_name_ = ftk->mgr.get_function(active_function_)->name;
     else
-        active_function_name = "";
+        active_function_name_ = "";
 
     int pos = -1;
     for (int i = 0; i < func_size; ++i) {
-        if (filter_model && !contains_element(filter_model->get_ff().idx, i)
-                           && !contains_element(filter_model->get_zz().idx, i))
-            continue;
-        if (i == active_function)
+        if (i == active_function_)
             pos = new_func_col_id.size();
-        Function const* f = ftk->mgr.get_function(i);
-        func_data.push_back(f->name);
-        func_data.push_back(f->tp()->name);
+        Function const* fun = ftk->mgr.get_function(i);
+        func_data.push_back(fun->name);
+        func_data.push_back(fun->tp()->name);
         realt a;
-        func_data.push_back(f->get_center(&a) ? S(a) : S("-"));
-        func_data.push_back(f->get_area(&a)   ? S(a) : S("-"));
-        func_data.push_back(f->get_height(&a) ? S(a) : S("-"));
-        func_data.push_back(f->get_fwhm(&a)   ? S(a) : S("-"));
+        func_data.push_back(fun->get_center(&a) ? S(a) : S("-"));
+        func_data.push_back(fun->get_area(&a)   ? S(a) : S("-"));
+        func_data.push_back(fun->get_height(&a) ? S(a) : S("-"));
+        func_data.push_back(fun->get_fwhm(&a)   ? S(a) : S("-"));
         vector<int> const& ffi = model->get_ff().idx;
         vector<int> const& zzi = model->get_zz().idx;
         vector<int>::const_iterator in_ff = find(ffi.begin(), ffi.end(), i);
@@ -631,13 +605,13 @@ void SideBar::update_var_list()
     }
 
     for (int i = 0; i < size(variables); ++i) {
-        const Variable* v = variables[i];
-        var_data.push_back(v->name);           //name
+        const Variable* var = variables[i];
+        var_data.push_back(var->name);           //name
         string refs = S(var_frefs[i]) + "+" + S(var_vrefs[i]) + " / "
-                      + S(v->used_vars().get_count());
+                      + S(var->used_vars().get_count());
         var_data.push_back(refs); //refs
-        var_data.push_back(S(v->get_value())); //value
-        var_data.push_back(v->get_formula(ftk->mgr.parameters()));  //formula
+        var_data.push_back(S(var->value())); //value
+        var_data.push_back(var->get_formula(ftk->mgr.parameters()));  //formula
     }
     v->list->populate(var_data);
 }
@@ -646,12 +620,11 @@ int SideBar::get_focused_data() const
 {
     wxListView *lv = d->list;
     int focused = lv->GetFocusedItem();
-    if (focused >= ftk->get_dm_count()) {
+    if (focused >= ftk->dk.count()) {
         d->update_data_list(false);
-        focused = ftk->get_dm_count() - 1;
+        focused = ftk->dk.count() - 1;
         lv->Focus(focused);
-    }
-    else if (focused < 0) {
+    } else if (focused < 0) {
         focused = 0;
         if (lv->GetItemCount() != 0)
             lv->Focus(focused);
@@ -675,7 +648,7 @@ vector<int> SideBar::get_selected_data_indices()
     if (!frame) // app not fully initialized yet
         return sel;
     wxListView *lv = d->list;
-    if (ftk->get_dm_count() != lv->GetItemCount())
+    if (ftk->dk.count() != lv->GetItemCount())
         d->update_data_list(false);
     for (int i = lv->GetFirstSelected(); i != -1; i = lv->GetNextSelected(i))
         sel.push_back(i);
@@ -692,7 +665,7 @@ vector<int> SideBar::get_selected_data_indices()
 vector<int> SideBar::get_ordered_dataset_numbers()
 {
     wxListView *lv = d->list;
-    if (ftk->get_dm_count() != lv->GetItemCount())
+    if (ftk->dk.count() != lv->GetItemCount())
         d->update_data_list(false);
     vector<int> ordered;
     int count = lv->GetItemCount();
@@ -707,8 +680,7 @@ vector<int> SideBar::get_ordered_dataset_numbers()
         if (lv->IsSelected(i)) {
             if (i != focused)
                 selected.push_back(i);
-        }
-        else
+        } else
             ordered.push_back(i);
     }
     ordered.insert(ordered.end(), selected.begin(), selected.end());
@@ -720,7 +692,7 @@ vector<int> SideBar::get_ordered_dataset_numbers()
 
 string SideBar::get_sel_datasets_as_string()
 {
-    if (ftk->get_dm_count() == 1)
+    if (ftk->dk.count() == 1)
         return "";
     if (data_look->GetSelection() == 0) // all datasets
         return " @*";
@@ -741,48 +713,42 @@ string SideBar::get_sel_datasets_as_string()
 
 void SideBar::activate_function(int n)
 {
-    active_function = n;
+    if (active_function_ == n)
+        return;
+    active_function_ = n;
     do_activate_function();
 
-    int pos;
-    if (filter_ch->GetSelection() > 0)
-        pos = f->list->FindItem(-1, s2wx(active_function_name));
-    else if (n < f->list->GetItemCount())
-        pos = n;
-    else
-        pos = -1;
-
-    if (pos != -1) {
+    if (n < f->list->GetItemCount()) {
         skipOnFuncFocusChanged_ = true;
-        f->list->Focus(pos);
+        f->list->Focus(n);
         skipOnFuncFocusChanged_ = false;
         for (int i = 0; i != f->list->GetItemCount(); ++i)
-            f->list->Select(i, i == pos);
+            f->list->Select(i, i == n);
     }
 }
 
 void SideBar::do_activate_function()
 {
-    if (active_function != -1)
-        active_function_name = ftk->mgr.get_function(active_function)->name;
+    if (active_function_ != -1)
+        active_function_name_ = ftk->mgr.get_function(active_function_)->name;
     else
-        active_function_name = "";
+        active_function_name_ = "";
     frame->plot_pane()->refresh_plots(false, kMainPlot);
     update_func_inf();
     update_param_panel();
 }
 
-void SideBar::select_datasets(const vector<int>& datasets)
-{
-    if (datasets.empty())
-        return;
-    wxListView *lv = d->list;
-    int n = lv->GetItemCount();
-    for (int i = 0; i != n; ++i)
-        lv->Select(i, contains_element(datasets, i));
-    if (datasets[0] < n)
-        lv->Focus(datasets[0]);
-}
+//void SideBar::select_datasets(const vector<int>& datasets)
+//{
+//    if (datasets.empty())
+//        return;
+//    wxListView *lv = d->list;
+//    int n = lv->GetItemCount();
+//    for (int i = 0; i != n; ++i)
+//        lv->Select(i, contains_element(datasets, i));
+//    if (datasets[0] < n)
+//        lv->Focus(datasets[0]);
+//}
 
 // Focus is _not_ used for data-related operations, only for function-related
 // ones. Sum and functions are shown only for focused dataset.
@@ -793,7 +759,7 @@ void SideBar::OnDataFocusChanged(wxListEvent &)
     //         + S(d->list->GetFocusedItem()));
     if (n < 0)
         return;
-    int length = ftk->get_dm_count();
+    int length = ftk->dk.count();
     if (length > 1)
         frame->plot_pane()->refresh_plots(false, kAllPlots);
     update_data_inf();
@@ -815,7 +781,7 @@ void SideBar::OnDataSelectionChanged(wxListEvent &/*event*/)
 
 void SideBar::update_data_buttons()
 {
-    bool not_the_last = get_focused_data()+1 < ftk->get_dm_count();
+    bool not_the_last = get_focused_data()+1 < ftk->dk.count();
     int sel_d = d->list->GetSelectedItemCount();
     data_page->FindWindow(ID_DP_REN)->Enable(sel_d == 1);
     //data_page->FindWindow(ID_DP_DEL)->Enable(sel_d > 0);
@@ -872,8 +838,8 @@ void SideBar::update_data_inf()
     wxTextCtrl* inf = d->inf;
     inf->Clear();
     inf->AppendText(wxString::Format(wxT("@%d: "), n));
-    inf->AppendText(s2wx(ftk->get_data(n)->get_info()));
-    wxFileName fn(s2wx(ftk->get_data(n)->get_filename()));
+    inf->AppendText(s2wx(ftk->dk.data(n)->get_info()));
+    wxFileName fn(s2wx(ftk->dk.data(n)->get_filename()));
     if (fn.IsOk() && !fn.IsAbsolute()) {
         fn.MakeAbsolute();
         inf->AppendText(wxT("\nPath: ") + fn.GetFullPath());
@@ -888,29 +854,32 @@ void SideBar::update_func_inf()
 {
     wxTextCtrl* inf = f->inf;
     inf->Clear();
-    if (active_function < 0)
+    if (active_function_ < 0)
         return;
-    Function const* func = ftk->mgr.get_function(active_function);
+    Function const* func = ftk->mgr.get_function(active_function_);
     realt a;
     if (func->get_center(&a))
         inf->AppendText(wxT("Center: ")
-                   + s2wx(format1<realt, 30>("%.10"REALT_LENGTH_MOD"g", a)));
+                   + s2wx(format1<realt, 30>("%.10" REALT_LENGTH_MOD "g", a)));
     if (func->get_area(&a))
         inf->AppendText(wxT("\nArea: ") + s2wx(S(a)));
     if (func->get_height(&a))
         inf->AppendText(wxT("\nHeight: ") + s2wx(S(a)));
     if (func->get_fwhm(&a))
         inf->AppendText(wxT("\nFWHM: ") + s2wx(S(a)));
-    if (func->get_iwidth(&a))
-        inf->AppendText(wxT("\nInt. Width: ") + s2wx(S(a)));
-    v_foreach (string, i, func->get_other_prop_names())
-        inf->AppendText(s2wx("\n" + *i + ": " + S(func->get_other_prop(*i))));
+    if (func->get_ibreadth(&a))
+        inf->AppendText(wxT("\nI.Breadth: ") + s2wx(S(a)));
+    v_foreach (string, i, func->get_other_prop_names()) {
+        func->get_other_prop(*i, &a);
+        inf->AppendText(s2wx("\n" + *i + ": " + S(a)));
+    }
 
     vector<string> in;
-    for (int i = 0; i < ftk->get_dm_count(); ++i) {
-        if (contains_element(ftk->get_model(i)->get_ff().idx, active_function))
+    for (int i = 0; i < ftk->dk.count(); ++i) {
+        const Model *model = ftk->dk.get_model(i);
+        if (contains_element(model->get_ff().idx, active_function_))
             in.push_back("@" + S(i) + ".F");
-        if (contains_element(ftk->get_model(i)->get_zz().idx, active_function))
+        if (contains_element(model->get_zz().idx, active_function_))
             in.push_back("@" + S(i) + ".Z");
     }
     if (!in.empty())
@@ -927,6 +896,7 @@ void SideBar::update_var_inf()
         return;
     const Variable* var = ftk->mgr.get_variable(n);
     string t = "$"+var->name + " = " + var->get_formula(ftk->mgr.parameters());
+    t += "\n" + var->domain.str();
     inf->AppendText(s2wx(t));
     vector<string> in = ftk->mgr.get_variable_references(var->name);
     if (!in.empty())
@@ -978,10 +948,10 @@ void SideBar::OnFuncFocusChanged(wxListEvent&)
         return;
     int n = f->list->GetFocusedItem();
     if (n == -1)
-        active_function = -1;
+        active_function_ = -1;
     else {
         string name = wx2s(f->list->GetItemText(n));
-        active_function = ftk->mgr.find_function_nr(name);
+        active_function_ = ftk->mgr.find_function_nr(name);
     }
     do_activate_function();
 }
@@ -991,71 +961,27 @@ void SideBar::OnVarFocusChanged(wxListEvent&)
     update_var_inf();
 }
 
-bool SideBar::find_value_of_param(string const& p, double* value)
-{
-    if (active_function != -1) {
-        Function const* f = ftk->mgr.get_function(active_function);
-        int idx = index_of_element(f->tp()->fargs, p);
-        if (idx != -1) {
-            *value = f->av()[idx];
-            return true;
-        }
-    }
-
-    v_foreach (Function*, i, ftk->mgr.functions()) {
-        int idx = index_of_element((*i)->tp()->fargs, p);
-        if (idx != -1) {
-            *value = (*i)->av()[idx];
-            return true;
-        }
-    }
-    return false;
-}
-
 void SideBar::make_same_func_par(string const& p, bool checked)
 {
-    string varname = "_" + p;
-    string val_str;
-    if (checked) {
-        double value = 0.;
-        bool found = find_value_of_param(p, &value);
-        if (!found)
-            return;
-
-        exec("$" + varname + " = ~" + S(value));
-        val_str = "$" + varname;
-    }
-    else {
-        int nr = ftk->mgr.find_variable_nr(varname);
-        if (nr == -1)
-            return;
-        val_str = ftk->mgr.get_variable(nr)->get_formula(ftk->mgr.parameters());
-        // varname (_hwhm or _shape) will be auto-deleted
-    }
-    string cmd;
-    for (int i = 0; i < ftk->get_dm_count(); ++i)
-        if (ftk->get_model(i)->get_ff().names.size() > 0) {
-            if (!cmd.empty())
-                cmd += "; ";
-            cmd += "@" + S(i) + ".F[*]." + p + " = " + val_str;
-        }
-    exec(cmd);
+    vector<string> cmds = ftk->mgr.share_par_cmd(p, checked);
+    v_foreach(string, cmd, cmds)
+        exec(*cmd);
 }
 
 void SideBar::on_parameter_changing(const std::vector<realt>& values)
 {
-    frame->get_main_plot()->draw_overlay_func(pp_func, values);
+    frame->get_main_plot()->draw_overlay_func(pp_func_, values);
 }
 
 void SideBar::on_parameter_changed(int n)
 {
-    string vname = wx2s(param_panel->get_label2(n));
-    exec(vname + " = ~" + eS(param_panel->get_value(n)));
+    string vname = wx2s(param_panel_->get_label2(n));
+    exec(vname + " = ~" + eS(param_panel_->get_value(n)));
 }
 
 void SideBar::on_parameter_lock_clicked(int n, int state)
 {
-    string vname = wx2s(param_panel->get_label2(n));
+    string vname = wx2s(param_panel_->get_label2(n));
     if (state == 0)
         exec(vname + " = ~{" + vname + "}");
     else if (state == 1)
@@ -1068,63 +994,56 @@ void SideBar::on_parameter_lock_clicked(int n, int state)
                 v->list->Select(i, true);
                 v->list->EnsureVisible(i);
                 v->list->Focus(i);
-            }
-            else
+            } else
                 v->list->Select(i, false);
         }
     }
 }
 
-void SideBar::change_parameter_value(int idx, double value)
-{
-    if (idx < param_panel->get_count())
-        param_panel->set_value(idx, value);
-}
-
 void SideBar::update_param_panel()
 {
-    int old_count = param_panel->get_count();
-    if (active_function < 0) {
-        param_panel->delete_row_range(0, old_count);
-        pp_func = NULL;
+    int old_count = param_panel_->get_count();
+    if (active_function_ < 0) {
+        param_panel_->delete_row_range(0, old_count);
+        pp_func_ = NULL;
         return;
     }
 
-    pp_func = ftk->mgr.get_function(active_function);
+    pp_func_ = ftk->mgr.get_function(active_function_);
 
-    wxString new_label = s2wx("%" + pp_func->name +" : "+ pp_func->tp()->name);
-    if (param_panel->get_title() != new_label)
-        param_panel->set_title(new_label);
+    wxString new_label = s2wx("%" + pp_func_->name +
+                              " : " + pp_func_->tp()->name);
+    if (param_panel_->get_title() != new_label)
+        param_panel_->set_title(new_label);
 
-    int new_count = pp_func->nv();
+    int new_count = pp_func_->nv();
     // don't show too many parameters of vararg functions
     // (but if user defined function with large number of arguments
     // let him see all parameters)
-    if (new_count > 8 && !pp_func->tp()->fargs.empty())
+    if (new_count > 8 && pp_func_->tp()->fargs.empty())
         new_count = 8;
     if (new_count < old_count)
-        param_panel->delete_row_range(new_count, old_count);
+        param_panel_->delete_row_range(new_count, old_count);
 
     for (int i = 0; i < new_count; ++i) {
         const Variable* var =
-            ftk->mgr.get_variable(pp_func->used_vars().get_idx(i));
-        wxString label = s2wx(pp_func->get_param(i));
+            ftk->mgr.get_variable(pp_func_->used_vars().get_idx(i));
+        wxString label = s2wx(pp_func_->get_param(i));
         if (var->is_simple() || var->is_constant()) {
             bool locked = var->is_constant();
-            param_panel->set_normal_parameter(i, label, var->get_value(),
-                                              locked, s2wx("$"+var->name));
-        }
-        else
-            param_panel->set_disabled_parameter(i, label, var->get_value(),
-                                                s2wx("$"+var->name));
+            param_panel_->set_normal_parameter(i, label, var->value(),
+                                               locked, s2wx("$"+var->name));
+        } else
+            param_panel_->set_disabled_parameter(i, label, var->value(),
+                                                 s2wx("$"+var->name));
     }
 
     // Layout() is needed only when the layout has changed (e.g. when label2
     // is shown for the first time). We call it always, just in case.
-    param_panel->Layout();
+    param_panel_->Layout();
     if (new_count != old_count) {
         int sash_pos = GetClientSize().GetHeight() - 3
-                         - param_panel->GetSizer()->GetMinSize().GetHeight();
+                         - param_panel_->GetSizer()->GetMinSize().GetHeight();
         if (sash_pos < GetSashPosition())
             SetSashPosition(max(50, sash_pos));
     }

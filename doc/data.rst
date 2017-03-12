@@ -29,12 +29,13 @@ where
 - *dataslot* should be replaced with ``@0``, unless many datasets
   are to be used simultaneously (for details see: :ref:`multidata`),
 
-- *xcol*, *ycol*, *scol* (supported only in text file) are columns
+- *xcol*, *ycol*, *scol* (supported only in text and CSV files) are columns
   corresponding to x, y and std. dev. of y.
   Column 0 means index of the point: 0 for the first point,
   1 for the second, etc.
 
-- *block* is only supported by formats with multiple blocks of data.
+- *block* - selects one or more blocks of data from a multi-block file
+  such as VAMAS
 
 - *filetype* usually can be omitted, because in most of the cases
   the filetype can be detected; the list of supported filetypes is
@@ -46,19 +47,24 @@ If the filename contains blank characters, a semicolon or comma, it
 should be put inside single quotation marks (together with colon-separated
 indices, if any).
 
-Multiple y columns and/or blocks can be specified, see the examples below::
+A few examples should clarify it::
 
     @0 < foo.vms
-    @0 < foo.fii text first_line_header
-    @0 < foo.dat:1:4:: # x,y - 1st and 4th columns
-    @0 < foo.dat:1:3,4:: # load two dataset (with y in columns 3,4)
-    @0 < foo.dat:1:3..5:: # load three dataset (with y in columns 3,4,5)
-    @0 < foo.dat:1:4..6,2:: # load four dataset (y: 4,5,6,2)
-    @0 < foo.dat:1:2..:: # load 2nd and all the next columns as y
-    @0 < foo.dat:1:2:3: # read std. dev. of y from 3rd column
-    @0 < foo.dat:0:1:: # x - 0,1,2,..., y - first column
-    @0 < 'foo.dat:0:1::' # the same
-    @0 < foo.raw::::0,1 # load two first blocks of data (as one dataset)
+    @0 < 'foo.vms'  # filename can be quoted
+    @0 < foo.fii text first_line_header  # with filetype options
+    @0 < foo.csv:1:4::  # x,y - 1st and 4th columns
+    @0 < foo.csv:1:2:3:  # read std. dev. of y from 3rd column
+    @0 < foo.csv:0:1::  # x - index (0,1,2,...), y - first column
+    @0 < foo.raw::::0,1  # load two first blocks of data (as one dataset)
+
+You may also specify multiple *y* columns.
+It will load each *x*/*y* pair as a separate dataset.
+In this case you need to use ``@+ < ...`` (``@+`` denotes new dataslot)::
+
+    @+ < foo.csv:1:3,4:: # load two dataset (with y in columns 3,4)
+    @+ < foo.csv:1:3..5:: # load three dataset (with y in columns 3,4,5)
+    @+ < foo.csv:1:4..6,2:: # load four dataset (y: 4,5,6,2)
+    @+ < foo.csv:1:2..:: # load 2nd and all the next columns as y
 
 Information about loaded data can be obtained with::
 
@@ -71,9 +77,15 @@ text
     ASCII text, multicolumn numeric data.
     The details are given in the next section.
 
+csv
+    CSV or TSV file. Similar to text but supports quoted (``"``) values
+    and uses different heuristic to interpret ambiguous cases.
+
 dbws
-    format used by DBWS (program for Rietveld analysis)
-    and DMPLOT.
+    format used by DBWS (program for Rietveld analysis) and DMPLOT.
+
+canberra_cnf
+    Canberra CNF format
 
 cpi
     Sietronics Sieray CPI format
@@ -105,6 +117,7 @@ spe
 pdcif
     CIF for powder diffraction
 
+And a few others.
 The full list is available at: http://xylib.sourceforge.net/.
 
 Reading Text Files
@@ -418,6 +431,8 @@ The following aggregate functions are recognized:
 
 * ``stddev()`` --- the standard deviation,
 
+* ``centile(N, )`` --- percentile
+
 * ``darea()`` --- a function used to normalize the area (see the example below).
   It returns the sum of
   *expression*\ \*(*x*\ [*n*\ +1]-*x*\ [*n*-1])/2.
@@ -427,6 +442,7 @@ The following aggregate functions are recognized:
 Examples::
 
     p avg(y) # print the average y value
+    p centile(50, y) # print the median y value
     p max(y) # the largest y value
     p argmax(y) # the position of data maximum
     p max(y if x > 40 and x < 60)   # the largest y value for x in (40, 60)
@@ -500,10 +516,10 @@ Variables ($foo) and functions (%bar) can be used in data expressions::
    :class: icon
 
 Values of the function parameters (e.g. ``%fun.a0``) and pseudo-parameters
-``Center``, ``Height``, ``FWHM`` and ``Area`` (e.g. ``%fun.Area``)
-can also be used.
-Pseudo-parameters are supported only by functions, which know
-how to calculate these properties.
+``Center``, ``Height``, ``FWHM``, ``IB`` and ``Area`` (e.g. ``%fun.Area``)
+can also be used. IB stands for Integral Breadth -- width of rectangle with
+the same area and height as the peak, in other words Area/Height.
+Not all functions have pseudo-parameters.
 
 It is also possible to calculate some properties of %functions:
 
@@ -520,7 +536,9 @@ It is also possible to calculate some properties of %functions:
 
 A few examples::
 
-    print %fun.numarea(, 0, 100, 10000) # shows area of function %fun
+    print %fun.findx(-10, 10, 0)  # find the zero of %fun in [-10, 10]
+    print F.findx(-10, 10, 0)     # find the zero of the model in [-10, 10]
+    print %fun.numarea(0, 100, 10000) # shows area of function %fun
     print %_1(%_1.extremum(40, 50)) # shows extremum value
     
     # calculate FWHM numerically, value 50 can be tuned

@@ -7,7 +7,7 @@ Prerequisites
 *  Lua >= 5.1
 *  zlib library
 *  xylib library - http://xylib.sf.net
-*  wxWidgets (wxGTK or wxMSW) >= 2.9.2 (for the GUI)
+*  wxWidgets (wxGTK or wxMSW) >= 3.0 (for the GUI)
 *  readline library >= 4.2 or compatible (optional, for the CLI)
 *  gnuplot program (optional, can be used with the CLI)
 
@@ -30,7 +30,7 @@ wxWidgets
 If you compile wxWidgets only to build fityk, you may use the following
 configure flags to disable unused features and make the compilation faster.
 
---disable-compat26 --disable-compat28 \
+--disable-compat28 \
 --without-regex --without-expat --without-opengl \
 --without-libjpeg --without-libtiff \
 --disable-threads --disable-html --disable-htmlhelp --enable-stc \
@@ -43,7 +43,7 @@ configure flags to disable unused features and make the compilation faster.
 --disable-tipdlg --disable-wizarddlg --disable-miniframe --disable-joystick \
 --disable-gif --disable-pcx --disable-tga --disable-iff --disable-pnm \
 --disable-mdi --disable-richtext --disable-rearrangectrl --disable-fswatcher \
---disable-ribbon --disable-propgrid --disable-infobar --disable-arcstream \
+--disable-ribbon --disable-propgrid --disable-arcstream \
 --disable-dataviewctrl --disable-detect_sm --disable-treelist \
 --disable-baseevtloop
 
@@ -56,20 +56,24 @@ To install the latest version from Git
 
 Install automake, autoconf, libtool and SWIG.
 
-Download http://www.physics.wisc.edu/~craigm/idl/down/cmpfit-1.2.tar.gz
-unpack it and copy cmpfit-1.2/mpfit.* to fityk/fityk/cmpfit/
-
 Before the ./configure step, run:
 $ autoreconf -iv
 
-Building manual (html version): cd doc && make html
+Optionally, build the fityk manual (html version): cd doc && make html
 This requires Sphinx >= 1.0 (http://sphinx.pocoo.org/), LaTeX and dvipng.
-If you prefer to skip this step do "mkdir -p doc/html/placeholder".
+If built, the manual is installed ("make install") along with the program.
+
+To compile tests (make check) download
+https://raw.githubusercontent.com/philsquared/Catch/master/single_include/catch.hpp
+and put it into tests/
 
 Configuration Options
 =====================
 
 ./configure --help shows all the options.
+
+Variables LUA, LUA_INCLUDE and LUA_LIB are useful when Lua is in non-default
+location or if it is suffixed (say, liblua5.2.so instead of liblua.so).
 
 To build python bindings, use --enable-python option.
 
@@ -77,11 +81,16 @@ To build perl bindings, install perl-ExtUtils-Embed and do "make perl"
 in fityk/ subdirectory. swig/Fityk.pm and swig/perl/Fityk.so can be installed
 manually. Try test: samples/hello.pl.
 
-
 For debugging you may use:
 ./configure CXXFLAGS="-g -O0 -fno-inline -W -Wall" \
-      --enable-static --disable-shared --disable-xyconvert
+      --enable-static --disable-shared
 
+Tests
+=====
+
+make check - runs unit tests in C++
+make check-python - runs tests that require Python bindings
+make check-cfityk - runs cfityk script that tests command parser
 
 ###########################################################################
 #             The instructions below are from GNU automake.               #
@@ -90,8 +99,8 @@ For debugging you may use:
 Installation Instructions
 *************************
 
-Copyright (C) 1994, 1995, 1996, 1999, 2000, 2001, 2002, 2004, 2005,
-2006, 2007, 2008, 2009 Free Software Foundation, Inc.
+Copyright (C) 1994-1996, 1999-2002, 2004-2013 Free Software Foundation,
+Inc.
 
    Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright
@@ -315,6 +324,11 @@ order to use an ANSI C compiler:
 
 and if that doesn't work, install pre-built binaries of GCC for HP-UX.
 
+   HP-UX `make' updates targets which have the same time stamps as
+their prerequisites, which makes it generally unusable when shipped
+generated files such as `configure' are involved.  Use GNU `make'
+instead.
+
    On OSF/1 a.k.a. Tru64, some versions of the default C compiler cannot
 parse its `<wchar.h>' header file.  The option `-nodtk' can be used as
 a workaround.  If GNU CC is not installed, it is therefore recommended
@@ -393,9 +407,10 @@ causes the specified `gcc' to be used as the C compiler (unless it is
 overridden in the site shell script).
 
 Unfortunately, this technique does not work for `CONFIG_SHELL' due to
-an Autoconf bug.  Until the bug is fixed you can use this workaround:
+an Autoconf limitation.  Until the limitation is lifted, you can use
+this workaround:
 
-     CONFIG_SHELL=/bin/bash /bin/bash ./configure CONFIG_SHELL=/bin/bash
+     CONFIG_SHELL=/bin/bash ./configure CONFIG_SHELL=/bin/bash
 
 `configure' Invocation
 ======================
@@ -451,4 +466,3 @@ operates.
 
 `configure' also accepts some other, not widely useful, options.  Run
 `configure --help' for more details.
-

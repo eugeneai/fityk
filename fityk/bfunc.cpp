@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// Built-in function definitions
 
@@ -15,49 +15,6 @@ using boost::math::lgamma;
 
 namespace fityk {
 
-#define CALCULATE_VALUE_BEGIN(NAME) \
-void NAME::calculate_value_in_range(vector<realt> const &xx, vector<realt> &yy,\
-                                    int first, int last) const\
-{\
-    for (int i = first; i < last; ++i) {\
-        realt x = xx[i];
-
-
-#define CALCULATE_VALUE_END(VAL) \
-        yy[i] += (VAL);\
-    }\
-}
-
-#define CALCULATE_DERIV_BEGIN(NAME) \
-void NAME::calculate_value_deriv_in_range(vector<realt> const &xx, \
-                                          vector<realt> &yy, \
-                                          vector<realt> &dy_da, \
-                                          bool in_dx, \
-                                          int first, int last) const \
-{ \
-    int dyn = dy_da.size() / xx.size(); \
-    vector<realt> dy_dv(nv(), 0.); \
-    for (int i = first; i < last; ++i) { \
-        realt x = xx[i]; \
-        realt dy_dx;
-
-
-#define CALCULATE_DERIV_END(VAL) \
-        if (!in_dx) { \
-            yy[i] += (VAL); \
-            v_foreach (Multi, j, multi_) \
-                dy_da[dyn*i+j->p] += dy_dv[j->n] * j->mult;\
-            dy_da[dyn*i+dyn-1] += dy_dx;\
-        }\
-        else {  \
-            v_foreach (Multi, j, multi_) \
-                dy_da[dyn*i+j->p] += dy_da[dyn*i+dyn-1] * dy_dv[j->n]*j->mult;\
-        } \
-    } \
-}
-
-
-///////////////////////////////////////////////////////////////////////
 
 void FuncConstant::calculate_value_in_range(vector<realt> const&/*xx*/,
                                             vector<realt>& yy,
@@ -232,8 +189,7 @@ CALCULATE_DERIV_BEGIN(FuncSplitGaussian)
     if (x < av_[1]) {
         dy_dv[2] = dcenter * xa1a2;
         dy_dv[3] = 0;
-    }
-    else {
+    } else {
         dy_dv[2] = 0;
         dy_dv[3] = dcenter * xa1a2;
     }
@@ -508,7 +464,7 @@ void FuncVoigt::more_precomputations()
 }
 
 CALCULATE_VALUE_BEGIN(FuncVoigt)
-    // humdev/humlik routines require with y (a3 here) parameter >0.
+    // humdev/humlik routines require the y (a3 here) parameter >0.
     float k;
     realt xa1a2 = (x - av_[1]) / av_[2];
     k = humlik(xa1a2, fabs(av_[3]));
@@ -537,32 +493,48 @@ bool FuncVoigt::get_nonzero_range(double level,
 {
     if (level == 0)
         return false;
-    else if (fabs(level) >= fabs(av_[0]))
+    realt t = fabs(av_[0]/level);
+    if (t <= 1) {
         left = right = 0;
-    else {
-        //TODO estimate Voigt's non-zero range
-        return false;
+    } else {
+        // I couldn't find ready-to-use approximation of the Voigt inverse.
+        // This estimation is used instead.
+        // width of Lorentzian (exact width when shape -> inf)
+        realt w_l = av_[3] * sqrt(t - 1);
+        // width of Gaussian (exact width when shape=0)
+        realt w_g = sqrt(log(t));
+        // The sum should do as upper bound of the width at given level.
+        realt w = (w_l + w_g) * av_[2];
+        left = av_[1] - w;
+        right = av_[1] + w;
     }
     return true;
 }
 
-///estimation according to
+/// estimation according to
 /// http://en.wikipedia.org/w/index.php?title=Voigt_profile&oldid=115518205
+///  fV ~= 0.5346fL + sqrt(0.2166 fL^2 + fG^2)
 ///
-/// a2 = sqrt(2) * sigma
-/// a3 = gamma / (sqrt(2) * sigma)
+/// In original paper, Olivero & Longbothum, 1977,
+/// http://dx.doi.org/10.1016/0022-4073(77)90161-3
+/// this approx. is called "modified Whiting" and is given as:
+///  alphaV = 1/2 { C1 alphaL + sqrt(C2 alphaL^2 + 4 C3 alphaD^2) }
+///   where C1=1.0692, C2=0.86639, C3=1.0
+/// Which is the same as the first formula  (C1/2=0.5346, C2/4=0.2165975).
 ///
-/// sigma = a2 / sqrt(2)
-/// gamma = a2 * a3
-static realt voigt_fwhm(realt a2, realt a3)
+/// Voigt parameters used in fityk (gwidth, shape) are equal:
+///   gwidth = sqrt(2) * sigma
+///   shape = gamma / (sqrt(2) * sigma)
+/// where sigma and gamma are defined as in the Wikipedia article.
+static realt voigt_fwhm(realt gwidth, realt shape)
 {
-    realt sigma = fabs(a2) / M_SQRT2;
-    realt gamma = fabs(a2) * a3;
+    realt sigma = fabs(gwidth) / M_SQRT2;
+    realt gamma = fabs(gwidth) * shape;
 
     realt fG = 2 * sigma * sqrt(2 * M_LN2);
     realt fL = 2 * gamma;
 
-    realt fV = 0.5346 * fL + sqrt(0.2166 * fL * fL + fG * fG);
+    realt fV = 0.5346 * fL + sqrt(0.2165975 * fL * fL + fG * fG);
     return fV;
 }
 
@@ -585,18 +557,19 @@ const vector<string>& FuncVoigt::get_other_prop_names() const
     return p;
 }
 
-realt FuncVoigt::get_other_prop(string const& name) const
+bool FuncVoigt::get_other_prop(string const& pname, realt* a) const
 {
-    if (name == "GaussianFWHM") {
+    if (pname == "GaussianFWHM") {
         realt sigma = fabs(av_[2]) / M_SQRT2;
-        return 2 * sigma * sqrt(2 * M_LN2);
-    }
-    else if (name == "LorentzianFWHM") {
+        *a = 2 * sigma * sqrt(2 * M_LN2);
+        return true;
+    } else if (pname == "LorentzianFWHM") {
         realt gamma = fabs(av_[2]) * av_[3];
-        return 2 * gamma;
+        *a = 2 * gamma;
+        return true;
+    } else {
+        return false;
     }
-    else
-        return 0.;
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -612,15 +585,15 @@ void FuncVoigtA::more_precomputations()
 }
 
 CALCULATE_VALUE_BEGIN(FuncVoigtA)
-    // humdev/humlik routines require with y (a3 here) parameter >0.
+    // humdev/humlik routines require the y (a3 here) parameter >0.
     float k;
     realt xa1a2 = (x - av_[1]) / av_[2];
     k = humlik(xa1a2, fabs(av_[3]));
 CALCULATE_VALUE_END(av_[0] / (sqrt(M_PI) * av_[2]) * k)
 
 CALCULATE_DERIV_BEGIN(FuncVoigtA)
-    // humdev/humlik routines require with y (a3 here) parameter >0.
-    // here fabs(av_[3]) is used, and dy_dv[3] is negated if av_[3]<0.
+    // humdev/humlik routines require the y (a3 here) parameter >0.
+    // Here fabs(av_[3]) is used, and dy_dv[3] is negated if av_[3]<0.
     float k;
     realt xa1a2 = (x-av_[1]) / av_[2];
     realt f = av_[0] / (sqrt(M_PI) * av_[2]);
@@ -716,13 +689,11 @@ CALCULATE_VALUE_BEGIN(FuncEMG)
         realt e_arg = bx/d + c*c/(2*d*d);
         // t = fact * exp(e_arg) * (d >= 0 ? 1-erf(erf_arg) : -1-erf(erf_arg));
         t = fact * exp(e_arg) * (d >= 0 ? erfc(erf_arg) : -erfc(-erf_arg));
-    }
-    else if ((d >= 0 && erf_arg > -26) || (d < 0 && -erf_arg > -26)) {
+    } else if ((d >= 0 && erf_arg > -26) || (d < 0 && -erf_arg > -26)) {
         realt h = exp(-bx*bx/(2*c*c));
         realt ee = d >= 0 ? erfcexp_x4(erf_arg) : -erfcexp_x4(-erf_arg);
         t = fact * h * ee;
-    }
-    else
+    } else
         t = 0;
 CALCULATE_VALUE_END(a*t)
 
@@ -914,7 +885,7 @@ CALCULATE_DERIV_BEGIN(FuncPielaszekCube)
     dy_dv[2] = dR;
     dy_dv[3] = ds;
     dy_dx = dcenter;
-CALCULATE_DERIV_END(height*t);
+CALCULATE_DERIV_END(height*t)
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -953,8 +924,7 @@ CALCULATE_DERIV_BEGIN(FuncLogNormal)
         dy_dv[3] = ex*(2.0*M_LN2*b*b/av_[3]
             -4.0*(x-av_[1])*log(a+1)*M_LN2/(av_[2]*av_[3]*av_[3]*(a+1)));
         dy_dx = -4.0*M_LN2/(av_[2]*(a+1))*ex*b;
-    }
-    else {
+    } else {
         ex = 0.0;
         dy_dv[0] = 0.0;
         dy_dv[1] = 0.0;
@@ -980,8 +950,7 @@ bool FuncLogNormal::get_nonzero_range(double level,
         if (w1>w0) {
             left = w0;
             right = w1;
-        }
-        else {
+        } else {
             left = w1;
             right = w0;
         }
@@ -1054,14 +1023,12 @@ CALCULATE_DERIV_BEGIN(FuncPolyline)
     if (q_.empty()) {
         dy_dx = 0;
         value = 0.;
-    }
-    else if (q_.size() == 1) {
+    } else if (q_.size() == 1) {
         //dy_dv[0] = 0; // 0 -> p_x
         dy_dv[1] = 1; // 1 -> p_y
         dy_dx = 0;
         value = q_[0].y;
-    }
-    else {
+    } else {
         // value = p0.y + (p1.y - p0.y) / (p1.x - p0.x) * (x - p0.x);
         vector<PointD>::iterator pos = get_interpolation_segment(q_, x);
         double lx = (pos + 1)->x - pos->x;

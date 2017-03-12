@@ -7,14 +7,11 @@
 #define FITYK_CPARSER_H_
 
 #include <string>
-#include "ui.h"
 #include "lexer.h"
 #include "eparser.h"
 #include "tplate.h"
 
 namespace fityk {
-
-class DataAndModel;
 
 enum CommandType
 {
@@ -34,6 +31,7 @@ enum CommandType
     kCmdSet,
     kCmdSleep,
     kCmdTitle,
+    kCmdUi,
     kCmdUndef,
     kCmdUse,
     kCmdShell,
@@ -42,7 +40,6 @@ enum CommandType
     kCmdNameFunc,
     kCmdNameVar,
     kCmdAssignParam,
-    //kCmdAssignAll,
     kCmdChangeModel,
     kCmdPointTr,
     kCmdAllPointsTr,
@@ -75,7 +72,7 @@ const char* commandtype2str(CommandType c);
 class FITYK_API Parser
 {
 public:
-    Parser(const Ftk* F);
+    Parser(const Full* F);
     ~Parser();
 
     // Parses statement. Throws SyntaxError.
@@ -98,7 +95,7 @@ public:
     Tplate::Ptr parse_define_args(Lexer& lex);
 
 private:
-    const Ftk* F_;
+    const Full* F_;
     ExpressionParser ep_;
     Statement st_;
 
@@ -111,6 +108,7 @@ private:
                           std::vector<std::string> *new_names);
     Token read_default_value(Lexer& lex);
     void parse_fz(Lexer& lex, Command &cmd);
+    void parse_assign_var(Lexer& lex, std::vector<Token>& args);
     void parse_assign_func(Lexer& lex, std::vector<Token>& args);
     void parse_command(Lexer& lex, Command& cmd);
     void parse_component(Lexer& lex, const std::vector<std::string>& lhs_vars,

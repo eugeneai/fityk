@@ -1,10 +1,9 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
 #include "settings.h"
 
-#include <ctype.h>
 #include <algorithm>
 #include <stdlib.h>
 #include <ctime> //time()
@@ -13,7 +12,10 @@
 #else
 #include <unistd.h> // chdir()
 #endif
-#include "common.h"
+// <config.h> is included from common.h from settings.h
+#if HAVE_LIBNLOPT
+# include <nlopt.h>
+#endif
 #include "logic.h"
 #include "fit.h"
 
@@ -55,6 +57,9 @@ static const char* default_sigma_enum[] =
 static const char* nm_distribution_enum[] =
 { "bound", "uniform", "gauss", "lorentz", NULL };
 
+// note: omitted elements are set to 0
+static const char* fit_method_enum[20] = { NULL };
+
 #define OPT(name, type, ini, allowed) \
 { #name, SettingsMgr::type, OptVal(&Settings::name, ini), allowed }
 
@@ -67,7 +72,7 @@ static const Option options[] = {
     OPT(pseudo_random_seed, kInt, 0, NULL),
     OPT(numeric_format, kString, "%g", NULL),
     OPT(logfile, kString, "", NULL),
-    OPT(log_full, kBool, false, NULL),
+    OPT(log_output, kBool, false, NULL),
     OPT(function_cutoff, kDouble, 0., NULL),
     OPT(cwd, kString, "", NULL),
 
@@ -75,18 +80,22 @@ static const Option options[] = {
     OPT(width_correction, kDouble, 1., NULL),
     OPT(guess_uses_weights, kBool, true, NULL),
 
-    OPT(fitting_method, kEnum, fit_method_enum[0], fit_method_enum),
+    OPT(fitting_method, kEnum, FitManager::method_list[0][0], fit_method_enum),
     OPT(max_wssr_evaluations, kInt, 1000, NULL),
     OPT(max_fitting_time, kDouble, 0., NULL),
     OPT(refresh_period, kInt, 4, NULL),
     OPT(fit_replot, kBool, false, NULL),
     OPT(domain_percent, kDouble, 30., NULL),
+    OPT(box_constraints, kBool, true, NULL),
 
     OPT(lm_lambda_start, kDouble, 0.001, NULL),
     OPT(lm_lambda_up_factor, kDouble, 10, NULL),
     OPT(lm_lambda_down_factor, kDouble, 10, NULL),
-    OPT(lm_stop_rel_change, kDouble, 1e-4, NULL),
     OPT(lm_max_lambda, kDouble, 1e+15, NULL),
+    OPT(lm_stop_rel_change, kDouble, 1e-7, NULL),
+    OPT(ftol_rel, kDouble, 0, NULL),
+    OPT(xtol_rel, kDouble, 0, NULL),
+    //OPT(mpfit_gtol, kDouble, 1e-10, NULL),
 
     OPT(nm_convergence, kDouble, 0.0001, NULL),
     OPT(nm_move_all, kBool, false, NULL),
@@ -94,12 +103,15 @@ static const Option options[] = {
     OPT(nm_move_factor, kDouble, 1., NULL),
 };
 
+static
 const Option& find_option(const string& name)
 {
     size_t len = sizeof(options) / sizeof(options[0]);
     for (size_t i = 0; i != len; ++i)
         if (options[i].name == name)
             return options[i];
+    if (name == "log_full") // old name used in fityk 1.2.9 and older
+        return find_option("log_output");
     throw ExecuteError("Unknown option: " +  name);
 }
 
@@ -107,7 +119,7 @@ static
 void change_current_working_dir(const char* path)
 {
 #ifdef _WIN32
-    bool ok = SetCurrentDirectoryA(path);
+    BOOL ok = SetCurrentDirectoryA(path);
 #else
     bool ok = (chdir(path) == 0);
 #endif
@@ -115,9 +127,11 @@ void change_current_working_dir(const char* path)
         throw ExecuteError("Changing current working directory failed.");
 }
 
-SettingsMgr::SettingsMgr(Ftk const* F)
-    : F_(F)
+SettingsMgr::SettingsMgr(BasicContext const* ctx)
+    : ctx_(ctx)
 {
+    for (int i = 0; FitManager::method_list[i][0]; ++i)
+        fit_method_enum[i] = FitManager::method_list[i][0];
     size_t len = sizeof(options) / sizeof(options[0]);
     for (size_t i = 0; i != len; ++i) {
         const Option& opt = options[i];
@@ -138,12 +152,12 @@ SettingsMgr::SettingsMgr(Ftk const* F)
 void SettingsMgr::set_long_double_format(const string& double_fmt)
 {
     long_double_format_ = double_fmt;
-    size_t pos = double_fmt.find_last_of("aAeEfFgG");;
+    size_t pos = double_fmt.find_last_of("aAeEfFgG");
     if (pos != string::npos && double_fmt[pos] != 'L')
         long_double_format_.insert(pos, "L");
 }
 
-string SettingsMgr::get_as_string(string const& k) const
+string SettingsMgr::get_as_string(string const& k, bool quote_str) const
 {
     const Option& opt = find_option(k);
     if (opt.vtype == kInt)
@@ -152,12 +166,26 @@ string SettingsMgr::get_as_string(string const& k) const
         return S(m_.*opt.val.d.ptr);
     else if (opt.vtype == kBool)
         return m_.*opt.val.b.ptr ? "1" : "0";
-    else if (opt.vtype == kString)
-        return "'" + S(m_.*opt.val.s.ptr) + "'";
-    else if (opt.vtype == kEnum)
+    else if (opt.vtype == kString) {
+        string v = m_.*opt.val.s.ptr;
+        return quote_str ? "'" + v + "'" : v;
+    } else if (opt.vtype == kEnum)
         return S(m_.*opt.val.e.ptr);
     assert(0);
     return "";
+}
+
+double SettingsMgr::get_as_number(string const& k) const
+{
+    const Option& opt = find_option(k);
+    if (opt.vtype == kInt)
+        return double(m_.*opt.val.i.ptr);
+    else if (opt.vtype == kDouble)
+        return m_.*opt.val.d.ptr;
+    else if (opt.vtype == kBool)
+        return double(m_.*opt.val.b.ptr);
+    throw ExecuteError("Not a number: option " +  k);
+    //return 0; // avoid compiler warning
 }
 
 int SettingsMgr::get_enum_index(string const& k) const
@@ -180,7 +208,7 @@ void SettingsMgr::set_as_string(string const& k, string const& v)
 {
     string sp = get_as_string(k);
     if (sp == v) {
-        F_->msg("Option '" + k + "' already has value: " + v);
+        ctx_->msg("Option '" + k + "' already has value: " + v);
         return;
     }
     const Option& opt = find_option(k);
@@ -194,18 +222,15 @@ void SettingsMgr::set_as_string(string const& k, string const& v)
             fprintf(f, "%s. LOG START: %s", fityk_version_line,
                                               time_now().c_str());
             fclose(f);
-        }
-        else if (k == "numeric_format") {
+        } else if (k == "numeric_format") {
             if (count(v.begin(), v.end(), '%') != 1)
                 throw ExecuteError("Exactly one `%' expected, e.g. '%.9g'");
             set_long_double_format(v);
-        }
-        else if (k == "cwd") {
+        } else if (k == "cwd") {
             change_current_working_dir(v.c_str());
         }
         m_.*opt.val.s.ptr = v;
-    }
-    else { // if (opt.vtype == kEnum)
+    } else { // if (opt.vtype == kEnum)
         const char **ptr = opt.allowed_values;
         while (*ptr) {
             if (*ptr == v) {
@@ -222,7 +247,7 @@ void SettingsMgr::set_as_number(string const& k, double d)
 {
     string sp = get_as_string(k);
     if (sp == S(d)) {
-        F_->msg("Option '" + k + "' already has value: " + sp);
+        ctx_->msg("Option '" + k + "' already has value: " + sp);
         return;
     }
     const Option& opt = find_option(k);
@@ -231,16 +256,14 @@ void SettingsMgr::set_as_number(string const& k, double d)
         m_.*opt.val.i.ptr = iround(d);
         if (k == "pseudo_random_seed")
             do_srand();
-    }
-    else if (opt.vtype == kDouble) {
+    } else if (opt.vtype == kDouble) {
         if (k == "epsilon") {
             if (d <= 0.)
                 throw ExecuteError("Value of epsilon must be positive.");
             epsilon = d;
         }
         m_.*opt.val.d.ptr = d;
-    }
-    else // if (opt.vtype == kBool)
+    } else // if (opt.vtype == kBool)
         m_.*opt.val.b.ptr = (fabs(d) >= 0.5);
 }
 
@@ -295,6 +318,9 @@ void SettingsMgr::do_srand()
     int seed = m_.pseudo_random_seed == 0 ? (int) time(NULL)
                                           : m_.pseudo_random_seed;
     srand(seed);
+#if HAVE_LIBNLOPT
+    nlopt_srand(seed);
+#endif
 }
 
 } // namespace fityk

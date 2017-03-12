@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// virtual machine for dataset transformations (@n = ...)
 
@@ -9,14 +9,10 @@
 
 namespace fityk {
 
-class DatasetTransformer
-{
-public:
-    DatasetTransformer(Ftk* F) : F_(F) {}
-    void run_dt(const VMData& vm, int out);
-private:
-    Ftk* F_;
-};
+class Data;
+class DataKeeper;
+
+void run_data_transform(const DataKeeper& dk, const VMData& vm, Data* data_out);
 
 } // namespace fityk
 #endif // FITYK_TRANSFORM_H_

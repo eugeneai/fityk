@@ -1,8 +1,8 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__BFUNC__H__
-#define FITYK__BFUNC__H__
+#ifndef FITYK_BFUNC_H_
+#define FITYK_BFUNC_H_
 
 #include "func.h"
 #include "numfuncs.h" // PointQ
@@ -14,10 +14,10 @@ private:\
     DISALLOW_COPY_AND_ASSIGN(Func##NAME); \
 public:\
     Func##NAME (const Settings* settings, \
-                const std::string &name, \
+                const std::string &fname, \
                 Tplate::Ptr tp, \
                 std::vector<std::string> const &vars) \
-        : PARENT(settings, name, tp, vars) {} \
+        : PARENT(settings, fname, tp, vars) {} \
     void calculate_value_in_range(std::vector<realt> const &xx, \
                                   std::vector<realt> &yy, \
                                   int first, int last) const;\
@@ -71,6 +71,7 @@ class FuncGaussian : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(Gaussian, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const { *a = av_[0]; return true; }
     bool get_fwhm(realt* a) const { *a = 2 * fabs(av_[2]); return true; }
@@ -94,6 +95,7 @@ class FuncLorentzian : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(Lorentzian, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const { *a = av_[0]; return true; }
     bool get_fwhm(realt* a) const { *a = 2 * fabs(av_[2]); return true; }
@@ -106,6 +108,7 @@ class FuncPearson7 : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(Pearson7, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const { *a = av_[0]; return true; }
     bool get_fwhm(realt* a) const { *a = 2 * fabs(av_[2]); return true; }
@@ -129,6 +132,7 @@ class FuncPseudoVoigt : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(PseudoVoigt, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const { *a = av_[0]; return true; }
     bool get_fwhm(realt* a) const { *a = 2 * fabs(av_[2]); return true; }
@@ -140,12 +144,13 @@ class FuncVoigt : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(Voigt, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const { *a = av_[0]; return true; }
     bool get_fwhm(realt* a) const;
     bool get_area(realt* a) const;
     const std::vector<std::string>& get_other_prop_names() const;
-    realt get_other_prop(std::string const& name) const;
+    bool get_other_prop(std::string const& pname, realt* a) const;
 };
 
 class FuncVoigtA : public Function
@@ -153,6 +158,7 @@ class FuncVoigtA : public Function
     DECLARE_FUNC_OBLIGATORY_METHODS(VoigtA, Function)
     void more_precomputations();
     bool get_nonzero_range(double level, realt &left, realt &right) const;
+    bool is_symmetric() const { return true; }
     bool get_center(realt* a) const { *a = av_[1]; return true; }
     bool get_height(realt* a) const;
     bool get_fwhm(realt* a) const;
@@ -199,10 +205,10 @@ public:
     virtual std::string get_param(int n) const;
 protected:
     VarArgFunction(const Settings* settings,
-                   const std::string &name,
+                   const std::string &fname,
                    Tplate::Ptr tp,
                    const std::vector<std::string> &vars)
-        : Function(settings, name, tp, vars) {}
+        : Function(settings, fname, tp, vars) {}
     virtual void init() { center_idx_ = -1; }
 };
 
@@ -221,6 +227,51 @@ class FuncPolyline : public VarArgFunction
 private:
     mutable std::vector<PointD> q_;
 };
+
+
+// macros for use in implementations
+
+#define CALCULATE_VALUE_BEGIN(NAME) \
+void NAME::calculate_value_in_range(vector<realt> const &xx, vector<realt> &yy,\
+                                    int first, int last) const\
+{\
+    for (int i = first; i < last; ++i) {\
+        realt x = xx[i];
+
+
+#define CALCULATE_VALUE_END(VAL) \
+        yy[i] += (VAL);\
+    }\
+}
+
+#define CALCULATE_DERIV_BEGIN(NAME) \
+void NAME::calculate_value_deriv_in_range(vector<realt> const &xx, \
+                                          vector<realt> &yy, \
+                                          vector<realt> &dy_da, \
+                                          bool in_dx, \
+                                          int first, int last) const \
+{ \
+    int dyn = dy_da.size() / xx.size(); \
+    vector<realt> dy_dv(nv(), 0.); \
+    for (int i = first; i < last; ++i) { \
+        realt x = xx[i]; \
+        realt dy_dx;
+
+
+#define CALCULATE_DERIV_END(VAL) \
+        if (!in_dx) { \
+            yy[i] += (VAL); \
+            v_foreach (Multi, j, multi_) \
+                dy_da[dyn*i+j->p] += dy_dv[j->n] * j->mult;\
+            dy_da[dyn*i+dyn-1] += dy_dx;\
+        }\
+        else {  \
+            v_foreach (Multi, j, multi_) \
+                dy_da[dyn*i+j->p] += dy_da[dyn*i+dyn-1] * dy_dv[j->n]*j->mult;\
+        } \
+    } \
+}
+
 
 } // namespace fityk
 #endif

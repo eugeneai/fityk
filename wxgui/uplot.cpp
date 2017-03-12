@@ -1,5 +1,6 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
+// (It is also part of xyconvert and can be distributed under LGPL2.1)
 
 /// utilities for making plot (BufferedPanel, scale_tics_step())
 
@@ -7,7 +8,7 @@
 #include <wx/dcgraph.h>
 
 #include "uplot.h"
-#include "cmn.h"
+//#include "cmn.h"
 
 #if !defined(XYCONVERT) && !defined(STANDALONE_POWDIFPAT)
 #include "frame.h" // frame->antialias()
@@ -38,21 +39,29 @@ void BufferedPanel::gc_draw(wxMemoryDC& dc)
 {
     if (antialias() && support_antialiasing_) {
         wxGCDC gdc(dc);
+#ifdef __WXMSW__
+        // this is necessary only for PNG output on Windows,
+        // together with explicit 32-bit bitmap depth in
+        // PlotPane::prepare_bitmap_for_export()
+        gdc.SetBackground(wxBrush(bg_color_));
+        gdc.Clear();
+#endif
         draw(gdc);
-    }
-    else
+    } else
         draw(dc);
 }
 
-wxBitmap BufferedPanel::draw_on_bitmap(int w, int h)
+wxBitmap BufferedPanel::draw_on_bitmap(int w, int h, int depth)
 {
-    wxBitmap bmp = wxBitmap(w, h);
+    wxBitmap bmp = wxBitmap(w, h, depth);
     memory_dc_.SelectObject(bmp);
     memory_dc_.SetBackground(wxBrush(bg_color_));
     memory_dc_.Clear();
     gc_draw(memory_dc_);
-    memory_dc_.SelectObject(buffer_);
-    memory_dc_.SetBackground(wxBrush(bg_color_));
+    if (buffer_.Ok()) {
+        memory_dc_.SelectObject(buffer_);
+        memory_dc_.SetBackground(wxBrush(bg_color_));
+    }
     return bmp;
 }
 
@@ -64,6 +73,8 @@ void BufferedPanel::update_buffer_and_blit()
     // check size
     wxCoord w, h;
     pdc.GetSize(&w, &h);
+    if (w == 0 || h == 0)
+        return;
     if (!buffer_.Ok() || w != buffer_.GetWidth() || h != buffer_.GetHeight()) {
         memory_dc_.SelectObject(wxNullBitmap);
         buffer_ = wxBitmap(w, h);
@@ -163,13 +174,13 @@ void PlotWithTics::draw_axis_labels(wxDC& dc, string const& x_name,
     int H = dc.GetSize().GetHeight();
     if (!x_name.empty()) {
         wxCoord tw, th;
-        dc.GetTextExtent (s2wx(x_name), &tw, &th);
-        dc.DrawText (s2wx(x_name), (W - tw)/2, 2);
+        dc.GetTextExtent(x_name, &tw, &th);
+        dc.DrawText(x_name, (W - tw)/2, 2);
     }
     if (!y_name.empty()) {
         wxCoord tw, th;
-        dc.GetTextExtent (s2wx(y_name), &tw, &th);
-        dc.DrawRotatedText (s2wx(y_name), W - 2, (H - tw)/2, 270);
+        dc.GetTextExtent(y_name, &tw, &th);
+        dc.DrawRotatedText(y_name, W - 2, (H - tw)/2, 270);
     }
 }
 
@@ -211,8 +222,7 @@ vector<double> scale_tics_step (double beg, double end, int max_tics,
                 }
             }
         }
-    }
-    else { // !logarithm
+    } else { // !logarithm
         double min_step = (end - beg) / max_tics;
         double s = pow(10, floor (log10 (min_step)));
         int minor_div = 5; //ratio of major-step to minor-step
@@ -222,8 +232,7 @@ vector<double> scale_tics_step (double beg, double end, int max_tics,
         else if (s * 2 >= min_step) {
             s *= 2;
             minor_div = 2;
-        }
-        else if (s * 2.5 >= min_step)
+        } else if (s * 2.5 >= min_step)
             s *= 2.5;
         else if (s * 5 >=  min_step)
             s *= 5;

@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -6,7 +6,7 @@
 
 #include <stdlib.h>
 #include <time.h>
-#include <math.h>
+#include <cmath>
 #include <vector>
 
 #include "common.h"
@@ -42,7 +42,6 @@ void NMfit::init()
     find_best_worst();
     compute_coord_sum();
     volume_factor = 1.;
-    //return best->wssr;
 }
 
 void NMfit::find_best_worst()
@@ -51,8 +50,7 @@ void NMfit::find_best_worst()
     if (vertices[0].wssr < vertices[1].wssr) {
         worst = vertices.begin() + 1;
         s_worst = best = vertices.begin();
-    }
-    else {
+    } else {
         worst = vertices.begin();
         s_worst = best = vertices.begin() + 1;
     }
@@ -62,24 +60,22 @@ void NMfit::find_best_worst()
         if (i->wssr > worst->wssr) {
             s_worst = worst;
             worst = i;
-        }
-        else if (i->wssr > s_worst->wssr && i != worst)
+        } else if (i->wssr > s_worst->wssr && i != worst)
             s_worst = i;
     }
 }
 
-void NMfit::autoiter()
+double NMfit::run_method(vector<realt>* best_a)
 {
+    init();
     realt convergence = F_->get_settings()->nm_convergence;
-    wssr_before_ = compute_wssr(a_orig_, dmdm_);
-    F_->msg("WSSR before starting simplex fit: " + S(wssr_before_));
     for (int iter = 0; !termination_criteria(iter, convergence); ++iter) {
-        ++iter_nr_;
         change_simplex();
         find_best_worst();
         iteration_plot(best->a, best->wssr);
     }
-    post_fit (best->a, best->wssr);
+    *best_a = best->a;
+    return best->wssr;
 }
 
 void NMfit::change_simplex()
@@ -89,8 +85,8 @@ void NMfit::change_simplex()
         try_new_worst (2.);
     else if (t >= s_worst->wssr) {
         realt old = worst->wssr;
-        realt t = try_new_worst(0.5);
-        if (t >= old) { // than multiple contraction
+        realt t2 = try_new_worst(0.5);
+        if (t2 >= old) { // than multiple contraction
             for (vector<Vertex>::iterator i = vertices.begin();
                                                     i != vertices.end() ;++i) {
                 if (i == best)
@@ -138,7 +134,7 @@ void NMfit::compute_coord_sum()
 bool NMfit::termination_criteria(int iter, realt convergence)
 {
     if (F_->get_verbosity() >= 1)
-        F_->ui()->mesg("#" + S(iter_nr_) + " (ev:" + S(evaluations_) + "):"
+        F_->ui()->mesg("#" + S(iter) + " (ev:" + S(evaluations_) + "):"
                        " best:" + S(best->wssr) +
                        " worst:" + S(worst->wssr) + ", " + S(s_worst->wssr) +
                        " [V * |" + S(volume_factor) + "|]");
@@ -156,7 +152,7 @@ bool NMfit::termination_criteria(int iter, realt convergence)
     F_->msg (s);
 *DEBUG - END*/
     //checking stop conditions
-    if (common_termination_criteria(iter))
+    if (common_termination_criteria())
         stop = true;
     if (is_zero(worst->wssr)) {
         F_->msg ("All vertices have WSSR < epsilon=" + S(epsilon));
@@ -174,7 +170,7 @@ bool NMfit::termination_criteria(int iter, realt convergence)
 void NMfit::compute_v(Vertex& v)
 {
     assert (!v.a.empty());
-    v.wssr = compute_wssr(v.a, dmdm_);
+    v.wssr = compute_wssr(v.a, fitted_datas_);
     v.computed = true;
 }
 

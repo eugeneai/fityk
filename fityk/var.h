@@ -1,19 +1,18 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_VAR_H_
 #define FITYK_VAR_H_
 
+#include <assert.h>
 #include "common.h"
 #include "vm.h"
 
 namespace fityk {
 struct OpTree;
 class Variable;
-class Function;
-class Sum;
 
-class IndexedVars
+class FITYK_API IndexedVars
 {
 public:
     IndexedVars() {}
@@ -47,11 +46,12 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IndexedVars);
 };
 
-/// the variable is either simple-variable and nr_ is the index in vector
-/// of parameters, or it is "compound variable" and has nr_==-1.
-/// third special case: nr_==-2 - it is mirror-variable (such variable
-///        is not recalculated but copied)
-/// In the second case, the value and derivatives are calculated:
+/// the variable can be one of:
+/// * simple-variable; gpos_ is its index in the global array of parameters,
+/// * compound-variable; gpos_ == -1,
+/// * mirror-variable; gpos_ == -2 (such variable is copied, not recalculated)
+///
+/// The value and derivatives of compound-variable are calculated in this way:
 /// -  string is parsed by eparser to VMData representation,
 ///    and then it is transformed to AST (struct OpTree), calculating derivates
 ///    at the same time (calculate_deriv()).
@@ -65,7 +65,7 @@ class FITYK_API Variable : public Var
 {
 public:
     struct ParMult { int p; realt mult; };
-    Variable(const std::string &name_, int nr);
+    Variable(const std::string &name_, int gpos);
     Variable(const std::string &name_, const std::vector<std::string> &vars,
              const std::vector<OpTree*> &op_trees);
     ~Variable();
@@ -80,7 +80,8 @@ public:
     const std::vector<ParMult>& recursive_derivatives() const
                                             { return recursive_derivatives_; }
     std::vector<OpTree*> const& get_op_trees() const { return op_trees_; }
-    void set_original(const Variable* orig) { assert(nr_==-2); original_=orig; }
+    void set_original(const Variable* orig)
+                                 { assert(gpos_ == -2); original_ = orig; }
     realt get_derivative(int n) const { return derivatives_[n]; }
     const IndexedVars& used_vars() const { return used_vars_; }
 

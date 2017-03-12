@@ -1,14 +1,13 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_TEXTPANE_H_
 #define FITYK_WX_TEXTPANE_H_
 
 #include "fityk/ui.h" // UserInterface::Style
-#include "inputline.h" // InputLineObserver
+#include "inputline.h" // InputLine, InputLineObserver
 
 class wxConfigBase;
-class InputLine;
 
 class OutputWin : public wxTextCtrl
 {
@@ -25,7 +24,7 @@ private:
     wxColour bg_color_;
     wxString selection_; // string passed to OnEditLine()
 
-    void show_fancy_dashes();
+    void add_initial_text();
     void set_bg_color(wxColour const &color);
     void OnRightDown (wxMouseEvent& event);
     void OnEditLine(wxCommandEvent&);

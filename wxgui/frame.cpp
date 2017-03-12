@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #include <wx/wx.h>
@@ -17,15 +17,16 @@
 #include <wx/stdpaths.h>
 #include <wx/clipbrd.h>
 #include <wx/filepicker.h>
+#include <wx/filename.h>
 
 #include <algorithm>
 #include <string.h>
-#include <ctype.h>
 
 #include <xylib/xylib.h>
 #include <xylib/cache.h>
 
 #include "frame.h"
+#include "recent.h"
 #include "plot.h"
 #include "mplot.h"
 #include "aplot.h"
@@ -57,7 +58,6 @@
 #include "fityk/data.h"
 #include "fityk/settings.h"
 #include "fityk/guess.h"
-#include "fityk/func.h"
 #include "fityk/tplate.h"
 
 #include "img/fityk.xpm"
@@ -89,7 +89,7 @@
 #include "img/editor16.h"
 #include "img/export16.h"
 #include "img/fileopen16.h"
-#include "img/filereload16.h"
+//#include "img/filereload16.h"
 #include "img/filesaveas16.h"
 #include "img/function16.h"
 #include "img/image16.h"
@@ -107,10 +107,17 @@
 #include "img/zoom-fit16.h"
 #include "img/powdifpat16.xpm"
 
-using namespace std;
-using fityk::FitMethodsContainer;
+//using namespace std;
+using std::string;
+using std::vector;
+
+#if XYLIB_VERSION < 10500
+typedef shared_ptr<const xylib::DataSet> dataset_shared_ptr;
+#endif
+
+using fityk::FitManager;
 FFrame *frame = NULL;
-fityk::Ftk *ftk = NULL;
+fityk::Full *ftk = NULL;
 
 UserInterface::Status exec(const std::string &s)
 {
@@ -164,8 +171,9 @@ enum {
     ID_F_REDO                  ,
     ID_F_HISTORY               ,
     ID_T_PD                    ,
+    ID_T_KEBE                  ,
     ID_F_M                     ,
-    ID_F_M_END = ID_F_M+10     ,
+    ID_F_M_END = ID_F_M+50     ,
     ID_SESSION_LOG             ,
     ID_LOG_START               ,
     ID_LOG_STOP                ,
@@ -177,7 +185,8 @@ enum {
     ID_COPY_TO_CLIPB           ,
     ID_SAVE_IMAGE              ,
     ID_SESSION_INCLUDE         ,
-    ID_SESSION_REINCLUDE       ,
+    ID_SESSION_RECENT          ,
+    ID_SESSION_RECENT_END = ID_SESSION_RECENT+50,
     ID_SESSION_NEW_F           ,
     ID_SESSION_NEW_L           ,
     ID_SESSION_NEW_H           ,
@@ -251,6 +260,7 @@ enum {
 };
 
 
+static
 void append_mi(wxMenu* menu, int id, wxBitmap const& bitmap,
                const wxString& text=wxT(""), const wxString& helpString=wxT(""))
 {
@@ -265,11 +275,12 @@ void append_mi(wxMenu* menu, int id, wxBitmap const& bitmap,
 
 BEGIN_EVENT_TABLE(FFrame, wxFrame)
     EVT_MENU (ID_SESSION_INCLUDE, FFrame::OnInclude)
-    EVT_MENU (ID_SESSION_REINCLUDE, FFrame::OnReInclude)
     EVT_MENU (ID_SESSION_NEW_F, FFrame::OnNewFitykScript)
     EVT_MENU (ID_SESSION_NEW_L, FFrame::OnNewLuaScript)
     EVT_MENU (ID_SESSION_NEW_H, FFrame::OnNewHistoryScript)
     EVT_MENU (ID_SCRIPT_EDIT,   FFrame::OnScriptEdit)
+    EVT_MENU_RANGE (ID_SESSION_RECENT+1, ID_SESSION_RECENT_END,
+                    FFrame::OnRecentScript)
 #ifdef __WXMAC__
     EVT_MENU (ID_SESSION_NEWWIN, FFrame::OnNewWindow)
 #endif
@@ -324,6 +335,7 @@ BEGIN_EVENT_TABLE(FFrame, wxFrame)
     EVT_MENU (ID_F_HISTORY,     FFrame::OnFHistory)
 
     EVT_MENU (ID_T_PD,          FFrame::OnPowderDiffraction)
+    EVT_MENU (ID_T_KEBE,        FFrame::OnXpsKEBE)
 
     EVT_MENU (ID_G_M_ZOOM,      FFrame::OnChangeMouseMode)
     EVT_MENU (ID_G_M_RANGE,     FFrame::OnChangeMouseMode)
@@ -377,7 +389,6 @@ BEGIN_EVENT_TABLE(FFrame, wxFrame)
 END_EVENT_TABLE()
 
 
-    // Define my frame constructor
 FFrame::FFrame(wxWindow *parent, const wxWindowID id, const wxString& title,
                  const long style)
     : wxFrame(parent, id, title, wxDefaultPosition, wxDefaultSize, style),
@@ -407,12 +418,15 @@ FFrame::FFrame(wxWindow *parent, const wxWindowID id, const wxString& title,
     v_splitter_->Initialize(main_pane_);
     sizer->Add(v_splitter_, 1, wxEXPAND, 0);
 
-    read_recent_data_files();
     set_menubar();
 
     toolbar_ = new FToolBar(this, -1);
     toolbar_->update_peak_type(peak_type_nr_, &peak_types_);
     SetToolBar(toolbar_);
+    // Realize() is called here and in SwitchToolbar() not in FToolBar ctor
+    // as a workaround for wxOSX/Cocoa problem:
+    // http://trac.wxwidgets.org/ticket/13888
+    toolbar_->Realize();
 
     //status bar
     status_bar_ = new FStatusBar(this);
@@ -432,8 +446,10 @@ FFrame::FFrame(wxWindow *parent, const wxWindowID id, const wxString& title,
 
 FFrame::~FFrame()
 {
-    write_recent_data_files();
-    wxConfig::Get()->Write(wxT("/DefaultFunctionType"), peak_type_nr_);
+    wxConfigBase *common_config = wxConfig::Get();
+    recent_scripts_->save_to_config(common_config);
+    recent_data_->save_to_config(common_config);
+    common_config->Write(wxT("/DefaultFunctionType"), peak_type_nr_);
     delete print_mgr_;
 #ifdef __WXMAC__
     // On wxCarbon 2.9.2svn assertion pops up on exit
@@ -459,61 +475,9 @@ void FFrame::update_peak_type_list()
         toolbar_->update_peak_type(peak_type_nr_, &peak_types_);
 }
 
-void FFrame::read_recent_data_files()
+void FFrame::add_recent_data_file(const wxString& filename)
 {
-    recent_data_files_.clear();
-    wxConfigBase *c = wxConfig::Get();
-    if (c && c->HasGroup(wxT("/RecentDataFiles"))) {
-        for (int i = 0; i < 20; i++) {
-            wxString key = wxString::Format(wxT("/RecentDataFiles/%i"), i);
-            if (c->HasEntry(key))
-                recent_data_files_.push_back(wxFileName(c->Read(key, wxT(""))));
-        }
-    }
-}
-
-void FFrame::write_recent_data_files()
-{
-    wxConfigBase *c = wxConfig::Get();
-    if (!c)
-        return;
-    wxString group(wxT("/RecentDataFiles"));
-    if (c->HasGroup(group))
-        c->DeleteGroup(group);
-    int counter = 0;
-    for (list<wxFileName>::const_iterator i = recent_data_files_.begin();
-         i != recent_data_files_.end() && counter < 9;
-         i++, counter++) {
-        wxString key = group + wxT("/") + s2wx(S(counter));
-        c->Write(key, i->GetFullPath());
-    }
-}
-
-void FFrame::add_recent_data_file(string const& filename)
-{
-    int const count = data_menu_recent->GetMenuItemCount();
-    wxMenuItemList const& mlist = data_menu_recent->GetMenuItems();
-    wxFileName const fn = wxFileName(s2wx(filename));
-    recent_data_files_.remove(fn);
-    recent_data_files_.push_front(fn);
-    int id_new = 0;
-	for (wxMenuItemList::compatibility_iterator i = mlist.GetFirst(); i;
-                                                            i = i->GetNext())
-        if (i->GetData()->GetHelp() == fn.GetFullPath()) {
-            id_new = i->GetData()->GetId();
-            data_menu_recent->Delete(i->GetData());
-            break;
-        }
-    if (id_new == 0) {
-        if (count >= 15) {
-            wxMenuItem *item = mlist.GetLast()->GetData();
-            id_new = item->GetId();
-            data_menu_recent->Delete(item);
-        }
-        else
-            id_new = ID_D_RECENT+count+1;
-    }
-    data_menu_recent->Prepend(id_new, fn.GetFullName(), fn.GetFullPath());
+    recent_data_->add(filename, "");
 }
 
 void FFrame::read_all_settings(wxConfigBase *cf)
@@ -583,20 +547,26 @@ void FFrame::save_settings(wxConfigBase *cf) const
 
 void FFrame::set_menubar()
 {
+    recent_data_ = new RecentFiles(ID_D_RECENT+1, "/RecentDataFiles");
+    recent_scripts_ = new RecentFiles(ID_SESSION_RECENT+1,
+                                      "/RecentScriptFiles");
+    wxConfigBase *common_config = wxConfig::Get();
+    recent_data_->load_from_config(common_config);
+    recent_scripts_->load_from_config(common_config);
+
     wxMenu* session_menu = new wxMenu;
     append_mi(session_menu, ID_SESSION_INCLUDE, GET_BMP(runmacro16),
               wxT("&Execute Script\tCtrl-X"),
               wxT("Execute commands from a file"));
-    session_menu->Append (ID_SESSION_REINCLUDE, wxT("R&e-Execute script"),
-             wxT("Reset & execute commands from the file included last time"));
-    session_menu->Enable (ID_SESSION_REINCLUDE, false);
     wxMenu *session_new_script_menu = new wxMenu;
     session_new_script_menu->Append(ID_SESSION_NEW_F, "&Blank Fityk Script");
-    session_new_script_menu->Append(ID_SESSION_NEW_L, "&Blank Lua Script");
+    session_new_script_menu->Append(ID_SESSION_NEW_L, "Blank &Lua Script");
     session_new_script_menu->Append(ID_SESSION_NEW_H, "&From Command History");
     session_menu->Append(-1, "&New Script", session_new_script_menu);
     append_mi(session_menu, ID_SCRIPT_EDIT, GET_BMP(editor16),
               wxT("E&dit Script"), wxT("Show script editor"));
+    session_menu->Append(ID_SESSION_RECENT, "&Recent Scripts",
+                         recent_scripts_->menu());
 #ifdef __WXMAC__
     session_menu->Append (ID_SESSION_NEWWIN, "New Window",
                           "Open new window (new process)");
@@ -643,13 +613,7 @@ void FFrame::set_menubar()
     append_mi(data_menu, ID_D_XLOAD, GET_BMP(fileopen16),
               wxT("&Load File\tCtrl-M"),
               wxT("Load data from file, with some options"));
-    this->data_menu_recent = new wxMenu;
-    int rf_counter = 1;
-    for (list<wxFileName>::const_iterator i = recent_data_files_.begin();
-         i != recent_data_files_.end() && rf_counter < 16; i++, rf_counter++)
-        data_menu_recent->Append(ID_D_RECENT + rf_counter,
-                                 i->GetFullName(), i->GetFullPath());
-    data_menu->Append(ID_D_RECENT, wxT("&Recent Files"), data_menu_recent);
+    data_menu->Append(ID_D_RECENT, "&Recent Files", recent_data_->menu());
     append_mi(data_menu, ID_D_REVERT, GET_BMP(revert16), wxT("Re&vert"),
               wxT("Reload data from file(s)"));
     data_menu->AppendSeparator();
@@ -671,7 +635,7 @@ void FFrame::set_menubar()
     data_menu->Append(-1, wxT("&XPS"), data_xps_menu);
     data_menu->AppendSeparator();
     append_mi(data_menu, ID_D_EXPORT, GET_BMP(export16),
-              wxT("&Export\tCtrl-S"), wxT("Save data to file"));
+              wxT("&Export Points\tCtrl-S"), wxT("Save data to file"));
 
     wxMenu* sum_menu = new wxMenu;
     func_type_menu_ = new wxMenu;
@@ -693,14 +657,14 @@ void FFrame::set_menubar()
     append_mi(sum_menu, ID_S_EXPORTF, GET_BMP(export16), wxT("&Export Formula"),
               wxT("Export mathematic formula to file"));
     append_mi(sum_menu, ID_S_EXPORTD, GET_BMP(export16), wxT("&Export Points"),
-              wxT("Export as points in TSV file"));
+              wxT("Export points to file"));
 
     wxMenu* fit_menu = new wxMenu;
     wxMenu* fit_method_menu = new wxMenu;
-    for (int i = 0; FitMethodsContainer::full_method_names[i][0] != NULL; ++i)
+    for (int i = 0; FitManager::method_list[i][0] != NULL; ++i)
         fit_method_menu->AppendRadioItem(ID_F_M+i,
-                    wxString("&")+FitMethodsContainer::full_method_names[i][0],
-                    FitMethodsContainer::full_method_names[i][1]);
+                                wxString("&") + FitManager::method_list[i][1],
+                                FitManager::method_list[i][2]);
     fit_menu->Append (ID_F_METHOD, wxT("&Method"), fit_method_menu, wxT(""));
     fit_menu->AppendSeparator();
     append_mi(fit_menu, ID_F_RUN, GET_BMP(run16), wxT("&Run...\tCtrl-R"),
@@ -719,6 +683,8 @@ void FFrame::set_menubar()
     append_mi(tools_menu, ID_T_PD, wxBitmap(powdifpat16_xpm),
               wxT("&Powder Diffraction"),
               wxT("A tool for Pawley fitting"));
+    tools_menu->Append(ID_T_KEBE, "&XPS KE<->BE",
+                       "Requires known source energy");
 
     wxMenu* gui_menu = new wxMenu;
     wxMenu* gui_menu_mode = new wxMenu;
@@ -869,6 +835,18 @@ void FFrame::set_menubar()
     SetMenuBar(menu_bar);
 }
 
+static void clear_menu(wxMenu *menu)
+{
+    for (int i = menu->GetMenuItemCount()-1; i >= 0; --i) {
+#ifndef __WXOSX__
+        wxMenuItem *item = menu->FindItemByPosition(i);
+#else
+        // workaround for http://trac.wxwidgets.org/ticket/15956
+        wxMenuItem *item = menu->FindItemByPosition(0);
+#endif
+        menu->Destroy(item);
+    }
+}
 
 //construct GUI->Previous Zooms menu
 void FFrame::update_menu_previous_zooms()
@@ -878,24 +856,22 @@ void FFrame::update_menu_previous_zooms()
     if (old_pos == pos)
         return;
     wxMenu *menu = GetMenuBar()->FindItem(ID_G_V_ZOOM_PREV)->GetSubMenu();
-    while (menu->GetMenuItemCount() > 0) // clear
-        menu->Delete(menu->GetMenuItems().GetLast()->GetData());
+    clear_menu(menu);
     const vector<string>& items = zoom_hist_.items();
-    int last = min(items.size() - 1, pos + 5);
+    int last = std::min(items.size() - 1, pos + 5);
     for (int i = last; i >= 0 && i > last - 10; i--)
         menu->AppendRadioItem(ID_G_V_ZOOM_FIRST + i, s2wx(items[i]));
     menu->Check(ID_G_V_ZOOM_FIRST + pos, true);
     old_pos = pos;
+    if (toolbar_)
+        toolbar_->EnableTool(ID_T_PZ, zoom_hist_.pos() > 0);
 }
 
 // construct GUI -> Baseline Handling -> Previous menu
 void FFrame::update_menu_recent_baselines()
 {
     wxMenu *menu = GetMenuBar()->FindItem(ID_G_BG_RECENT)->GetSubMenu();
-    // clear menu
-    while (menu->GetMenuItemCount() > 0)
-        menu->Delete(menu->GetMenuItems().GetLast()->GetData());
-
+    clear_menu(menu);
     for (int i = 0; i < 10; ++i) {
         wxString name = get_main_plot()->bgm()->get_recent_bg_name(i);
         if (name.empty())
@@ -963,33 +939,13 @@ void FFrame::OnExample(wxCommandEvent& event)
 
 namespace {
 
-class ExtraCheckBox: public wxPanel
-{
-public:
-    ExtraCheckBox(wxWindow* parent, wxString label, bool value)
-        : wxPanel(parent, -1)
-    {
-        cb = new wxCheckBox(this, -1, label);
-        cb->SetValue(value);
-        wxBoxSizer *sizer = new wxBoxSizer(wxHORIZONTAL);
-#ifdef __WXMSW__
-        sizer->AddSpacer(100);
-        sizer->Add(cb, 0, wxLEFT|wxBOTTOM, 5);
-#else
-        sizer->Add(cb);
-#endif
-        SetSizerAndFit(sizer);
-    }
-    wxCheckBox *cb;
-};
-
-
 wxWindow* qload_filedialog_extra(wxWindow* parent)
 {
     bool def_sqrt = (S(ftk->get_settings()->default_sigma) == "sqrt");
-    return new ExtraCheckBox(parent,
-                             wxT("data weighting: \u03C3=max(\u221Ay, 1)"),
-                             def_sqrt);
+    bool decimal_comma = wxConfig::Get()->ReadBool("decimalComma", false);
+    return new Extra2CheckBoxes(parent,
+                        wxT("data weighting: \u03C3=max(\u221Ay, 1)"), def_sqrt,
+                        "decimal comma", decimal_comma);
 }
 
 } // anonymous namespace
@@ -1001,7 +957,7 @@ void FFrame::OnDataQLoad (wxCommandEvent&)
                                        + s2wx(xylib::get_wildcards_string()),
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
     // on wxOSX/Carbon SetExtraControlCreator() is unreliable
-#ifndef __WXMAC__
+#ifndef __WXOSX_CARBON__
     fdlg.SetExtraControlCreator(&qload_filedialog_extra);
 #endif
     int ret = fdlg.ShowModal();
@@ -1009,10 +965,24 @@ void FFrame::OnDataQLoad (wxCommandEvent&)
     if (ret != wxID_OK)
         return;
 
+    string cmd;
+    string options;
+    wxWindow *extra = fdlg.GetExtraControl();
+    if (extra != NULL) {
+        Extra2CheckBoxes *extracb = wxDynamicCast(extra,Extra2CheckBoxes);
+        string selected = extracb->is_checked1() ? "sqrt" : "one";
+        if (ftk->get_settings()->default_sigma != selected)
+            cmd = "with default_sigma=" + selected + " ";
+
+        bool decimal_comma = extracb->is_checked2();
+        if (decimal_comma)
+            options += "decimal_comma";
+        wxConfig::Get()->Write("decimalComma", decimal_comma);
+    }
+
     wxArrayString paths;
     fdlg.GetPaths(paths);
     int count = paths.GetCount();
-    string cmd;
     if (count == 1) {
         string f = wx2s(paths[0]);
         if (endswith(f, ".fit")) {
@@ -1028,8 +998,7 @@ void FFrame::OnDataQLoad (wxCommandEvent&)
                 return;
         }
         try {
-            shared_ptr<const xylib::DataSet> d =
-                                            xylib::cached_load_file(f, "", "");
+            dataset_shared_ptr d = xylib::cached_load_file(f, "", "");
             if (d->get_block_count() > 1) {
                 wxArrayString choices;
                 for (int i = 0; i < d->get_block_count(); ++i) {
@@ -1048,25 +1017,32 @@ void FFrame::OnDataQLoad (wxCommandEvent&)
                 sel = mdlg.GetSelections();
                 paths.clear();
                 for (size_t i = 0; i < sel.size(); ++i)
-                    paths.push_back(s2wx(f + "::::" + S(i)));
+                    paths.push_back(s2wx(f + "::::" + S(sel[i])));
             }
-        } catch (const runtime_error& e) {
+        } catch (const std::runtime_error& /*e*/) {
         } // ignore the exception here, it'll be thrown later
     }
 
+    bool has_single_quote = false;
     for (size_t i = 0; i < paths.size(); ++i) {
         if (i != 0)
             cmd += " ; ";
-        cmd += "@+ <'" + wx2s(paths[i]) + "'";
-        add_recent_data_file(wx2s(paths[i]));
+        if (!has_single_quote)
+            if (paths[i].Find('\'') != wxNOT_FOUND) {
+                has_single_quote = true;
+                cmd += "lua ";
+            }
+        if (has_single_quote) { // very special case
+            cmd += "F:load(-1, [[" + wx2s(paths[i]) + "]], 0, 1, 2, 0, '', '"
+                + options + "')";
+        } else {
+            cmd += "@+ <'" + wx2s(paths[i]) + "'";
+            if (!options.empty())
+               cmd += " _ " + options;
+        }
+        recent_data_->add(paths[i], options.empty() ? "" : "_ "+options);
     }
-    wxWindow *extra = fdlg.GetExtraControl();
-    if (extra != NULL) {
-        bool checked = wxDynamicCast(extra,ExtraCheckBox)->cb->GetValue();
-        string selected = checked ? "sqrt" : "one";
-        if (ftk->get_settings()->default_sigma != selected)
-            cmd = "with default_sigma=" + selected + " " + cmd;
-    }
+
     exec(cmd);
     if (count > 1)
         SwitchSideBar(true);
@@ -1077,23 +1053,31 @@ void FFrame::OnDataXLoad (wxCommandEvent&)
     vector<int> sel = get_selected_data_indices();
     int n = (sel.size() == 1 ? sel[0] : -1);
     // in case of multi-selection, use the first item
-    fityk::Data *data = ftk->get_data(sel[0]);
+    fityk::Data *data = ftk->dk.data(sel[0]);
     DLoadDlg dload_dialog(this, n, data, data_dir_);
     dload_dialog.ShowModal();
 }
 
 void FFrame::OnDataRecent (wxCommandEvent& event)
 {
-    string s = wx2s(GetMenuBar()->GetHelpString(event.GetId()));
-    exec("@+ <'" + s + "'");
-    add_recent_data_file(s);
+    const RecentFiles::Item& item = recent_data_->pull(event.GetId());
+    wxString path = item.fn.GetFullPath();
+    if (path.Find('\'') == wxNOT_FOUND) {
+        string cmd = "@+ <'" + wx2s(path) + "'";
+        if (!item.options.empty())
+            cmd += " " + item.options;
+        exec(cmd);
+    } else { // very special case
+        // ignoring options
+        exec("lua F:load(-1, [[" + wx2s(path) + "]])");
+    }
 }
 
 void FFrame::OnDataRevertUpdate (wxUpdateUIEvent& event)
 {
     vector<int> sel = get_selected_data_indices();
     event.Enable(sel.size() == 1
-                 && !ftk->get_data(sel[0])->get_filename().empty());
+                 && !ftk->dk.data(sel[0])->get_filename().empty());
 }
 
 void FFrame::OnDataRevert (wxCommandEvent&)
@@ -1111,16 +1095,16 @@ void FFrame::OnDataRevert (wxCommandEvent&)
 void FFrame::OnDataTable(wxCommandEvent&)
 {
     int data_nr = get_focused_data_index();
-    DataTableDlg data_table(this, -1, data_nr, ftk->get_data(data_nr));
+    DataTableDlg data_table(this, -1, data_nr, ftk->dk.data(data_nr));
     data_table.ShowModal();
 }
 
 void FFrame::OnDataEditor (wxCommandEvent&)
 {
-    vector<pair<int,fityk::Data*> > dd;
+    vector<std::pair<int,fityk::Data*> > dd;
     vector<int> sel = get_selected_data_indices();
     for (vector<int>::const_iterator i = sel.begin(); i != sel.end(); ++i)
-        dd.push_back(make_pair(*i, ftk->get_data(*i)));
+        dd.push_back(std::make_pair(*i, ftk->dk.data(*i)));
     EditTransDlg data_editor(this, -1, dd);
     data_editor.ShowModal();
     update_menu_saved_transforms();
@@ -1167,8 +1151,8 @@ void FFrame::OnDataCalcShirley (wxCommandEvent&)
 {
     vector<int> sel = get_selected_data_indices();
     for (vector<int>::const_iterator i = sel.begin(); i != sel.end(); ++i) {
-        string title = ftk->get_data(*i)->get_title();
-        int c = ftk->get_dm_count();
+        string title = ftk->dk.data(*i)->get_title();
+        int c = ftk->dk.count();
         exec("@+ = shirley_bg(@" + S(*i) + ")");
         exec("@" + S(c) + ": title = '" + title + "-Shirley'");
     }
@@ -1189,7 +1173,7 @@ void FFrame::OnDataRmShirley (wxCommandEvent&)
 
 void FFrame::OnDataExport (wxCommandEvent&)
 {
-    export_data_dlg(this);
+    export_data_dlg(get_selected_data_indices(), this, &export_dir_);
 }
 
 void FFrame::OnDefinitionMgr(wxCommandEvent&)
@@ -1230,8 +1214,7 @@ void FFrame::OnModelExport(wxCommandEvent&)
 
 void FFrame::OnParametersExport(wxCommandEvent&)
 {
-    export_as_info("info peaks", "Export parameters to file", ".peaks",
-                   "parameters of functions (*.peaks)|*.peaks");
+    export_peak_parameters(get_selected_data_indices(), this, &export_dir_);
 }
 
 void FFrame::export_as_info(const string& info, const char* caption,
@@ -1240,7 +1223,7 @@ void FFrame::export_as_info(const string& info, const char* caption,
     wxString name;
     vector<int> sel = get_selected_data_indices();
     if (sel.size() == 1) {
-        const string& filename = ftk->get_data(sel[0])->get_filename();
+        const string& filename = ftk->dk.data(sel[0])->get_filename();
         if (!filename.empty())
             name = wxFileName(s2wx(filename)).GetName() + ext;
     }
@@ -1267,17 +1250,17 @@ void FFrame::OnMenuFitRunUpdate(wxUpdateUIEvent& event)
 
 void FFrame::OnMenuFitUndoUpdate(wxUpdateUIEvent& event)
 {
-    event.Enable(ftk->get_fit_container()->can_undo());
+    event.Enable(ftk->fit_manager()->can_undo());
 }
 
 void FFrame::OnMenuFitRedoUpdate(wxUpdateUIEvent& event)
 {
-    event.Enable(ftk->get_fit_container()->has_param_history_rel_item(1));
+    event.Enable(ftk->fit_manager()->has_param_history_rel_item(1));
 }
 
 void FFrame::OnMenuFitHistoryUpdate(wxUpdateUIEvent& event)
 {
-    event.Enable(ftk->get_fit_container()->get_param_history_size() != 0);
+    event.Enable(ftk->fit_manager()->get_param_history_size() != 0);
 }
 
 void FFrame::OnFOneOfMethods (wxCommandEvent& event)
@@ -1290,7 +1273,7 @@ void FFrame::OnFOneOfMethods (wxCommandEvent& event)
 
 void FFrame::OnFRun (wxCommandEvent&)
 {
-    FitRunDlg dlg(this, -1, true);
+    FitRunDlg dlg(this, -1);
     if (dlg.ShowModal() == wxID_OK) {
         string cmd = dlg.get_cmd();
         exec(cmd);
@@ -1326,6 +1309,24 @@ void FFrame::OnPowderDiffraction (wxCommandEvent&)
     PowderDiffractionDlg(this, -1).ShowModal();
 }
 
+void FFrame::OnXpsKEBE(wxCommandEvent&)
+{
+    vector<int> dd = get_selected_data_indices();
+    v_foreach(int, i, dd) {
+        Data *data = ftk->dk.data(*i);
+        double e = data->xps_source_energy();
+        if (e > 0) {
+            exec("@" + S(*i) + ": X = " + eS(e) +
+                 (data->get_x_min() > 0 ? " - x" : " + x"));
+        } else {
+            wxMessageBox("Switching between Kinetic and Binding Energy\n"
+                         "works only when the source energy is known\n"
+                         "from the data file in VAMAS or other XPS format.",
+                         "Unknown source energy", wxOK|wxICON_ERROR);
+        }
+    }
+}
+
 void FFrame::OnMenuLogStartUpdate (wxUpdateUIEvent& event)
 {
     event.Enable(ftk->get_settings()->logfile.empty());
@@ -1339,13 +1340,13 @@ void FFrame::OnMenuLogStopUpdate (wxUpdateUIEvent& event)
 void FFrame::OnMenuLogOutputUpdate (wxUpdateUIEvent& event)
 {
     if (!ftk->get_settings()->logfile.empty())
-        event.Check(ftk->get_settings()->log_full);
+        event.Check(ftk->get_settings()->log_output);
 }
 
 static
 wxWindow* log_filedialog_extra(wxWindow* parent)
 {
-    bool init_value = ftk->get_settings()->log_full;
+    bool init_value = ftk->get_settings()->log_output;
     return new ExtraCheckBox(parent, "log also output", init_value);
 }
 
@@ -1355,7 +1356,7 @@ void FFrame::OnLogStart (wxCommandEvent&)
                        wxT("Fityk script file (*.fit)|*.fit;*.FIT")
                        wxT("|All files |*"),
                        wxFD_SAVE);
-#ifndef __WXMAC__
+#ifndef __WXOSX_CARBON__
     fdlg.SetExtraControlCreator(&log_filedialog_extra);
 #endif
     const string& logfile = ftk->get_settings()->logfile;
@@ -1365,9 +1366,9 @@ void FFrame::OnLogStart (wxCommandEvent&)
         string cmd = "set logfile='" + wx2s(fdlg.GetPath()) + "'";
         wxWindow *extra = fdlg.GetExtraControl();
         if (extra != NULL) {
-            bool checked = wxDynamicCast(extra,ExtraCheckBox)->cb->GetValue();
-            if (checked != ftk->get_settings()->log_full)
-                cmd += ", log_full=" + S(checked ? "1" : "0");
+            bool checked = wxDynamicCast(extra,ExtraCheckBox)->is_checked();
+            if (checked != ftk->get_settings()->log_output)
+                cmd += ", log_output=" + S(checked ? "1" : "0");
         }
         exec(cmd);
     }
@@ -1383,7 +1384,7 @@ void FFrame::OnLogWithOutput (wxCommandEvent& event)
 {
     bool checked = event.IsChecked();
     GetMenuBar()->Check(ID_LOG_WITH_OUTPUT, checked);
-    exec("set log_full=" + S((int)checked));
+    exec("set log_output=" + S((int)checked));
 }
 
 void FFrame::OnSaveHistory (wxCommandEvent&)
@@ -1423,16 +1424,17 @@ void FFrame::OnInclude (wxCommandEvent&)
                       script_dir_, "", fityk_lua_wildcards,
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (fdlg.ShowModal() == wxID_OK) {
-        exec("exec '" + wx2s(fdlg.GetPath()) + "'");
-        last_include_path_ = wx2s(fdlg.GetPath());
-        GetMenuBar()->Enable(ID_SESSION_REINCLUDE, true);
+        wxString path = fdlg.GetPath();
+        exec("exec '" + wx2s(path) + "'");
+        recent_scripts_->add(path, "");
     }
     script_dir_ = fdlg.GetDirectory();
 }
 
-void FFrame::OnReInclude (wxCommandEvent&)
+void FFrame::OnRecentScript(wxCommandEvent& event)
 {
-    exec("reset; exec '" + last_include_path_ + "'");
+    wxString s = recent_scripts_->pull(event.GetId()).fn.GetFullPath();
+    exec("exec '" + wx2s(s) + "'");
 }
 
 void FFrame::OnNewFitykScript(wxCommandEvent&)
@@ -1475,30 +1477,44 @@ void FFrame::show_editor(const wxString& path, const wxString& content)
     dlg->Show(true);
 }
 
+static void split_path(const wxString& path, wxString* dir, wxString* name) {
+    if (path.empty())
+        return;
+    wxFileName fn(path);
+    *dir = fn.GetPath(); // GetPath() returns only directory not path
+    *name = fn.GetFullName(); // "fullname" is basename w/ extension
+}
+
 void FFrame::OnSessionLoad(wxCommandEvent&)
 {
+    wxString dir = script_dir_;
+    wxString file;
+    split_path(last_session_path_, &dir, &file);
     wxFileDialog fdlg(this, "Run script (after resetting session)",
-                      script_dir_, "", fityk_lua_wildcards,
+                      dir, file, fityk_lua_wildcards,
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (fdlg.ShowModal() == wxID_OK) {
         get_main_plot()->bgm()->clear_background();
-        exec("reset; exec '" + wx2s(fdlg.GetPath()) + "'");
-        //last_include_path_ = wx2s(fdlg.GetPath());
-        //GetMenuBar()->Enable(ID_SESSION_REINCLUDE, true);
+        last_session_path_ = fdlg.GetPath();
+        exec("reset; exec '" + wx2s(last_session_path_) + "'");
+        //GetMenuBar()->Enable(ID_SESSION_RECENT, true);
     }
     script_dir_ = fdlg.GetDirectory();
 }
 
 void FFrame::OnSessionSave(wxCommandEvent&)
 {
-    wxFileDialog fdlg(this, wxT("Save everything as a script"),
-                      export_dir_, wxT(""),
-                      wxT("fityk file (*.fit)|*.fit;*.FIT"),
+    wxString dir = script_dir_;
+    wxString file;
+    split_path(last_session_path_, &dir, &file);
+    wxFileDialog fdlg(this, "Save everything as a script",
+                      dir, file, "fityk file (*.fit)|*.fit;*.FIT",
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     if (fdlg.ShowModal() == wxID_OK) {
-        exec("info state > '" + wx2s(fdlg.GetPath()) + "'");
+        last_session_path_ = fdlg.GetPath();
+        exec("info state > '" + wx2s(last_session_path_) + "'");
     }
-    export_dir_ = fdlg.GetDirectory();
+    script_dir_ = fdlg.GetDirectory();
 }
 
 void FFrame::OnSettings (wxCommandEvent&)
@@ -1571,7 +1587,7 @@ void FFrame::update_menu_functions()
     }
     // -- end of the workaround
 
-    for (size_t i = 0; i < min(pcnt, cnt); i++)
+    for (size_t i = 0; i < std::min(pcnt, cnt); i++)
         if (func_type_menu_->GetLabel(ID_G_M_PEAK_N+i) != s2wx(peak_types_[i]))
             func_type_menu_->SetLabel(ID_G_M_PEAK_N+i, s2wx(peak_types_[i]));
     for (size_t i = cnt; i < pcnt; i++)
@@ -1650,11 +1666,11 @@ void FFrame::SwitchToolbar(bool show)
     if (show && !GetToolBar()) {
         toolbar_ = new FToolBar(this, -1);
         SetToolBar(toolbar_);
+        toolbar_->Realize();
         update_toolbar();
         update_peak_type_list();
         //toolbar_->ToggleTool(ID_T_BAR, v_splitter_->IsSplit());
-    }
-    else if (!show && GetToolBar()){
+    } else if (!show && GetToolBar()){
         SetToolBar(NULL);
         delete toolbar_;
         toolbar_ = NULL;
@@ -1674,8 +1690,7 @@ void FFrame::SwitchSideBar(bool show)
     if (show && !v_splitter_->IsSplit()) {
         sidebar_->Show(true);
         v_splitter_->SplitVertProp(main_pane_, sidebar_);
-    }
-    else if (!show && v_splitter_->IsSplit()) {
+    } else if (!show && v_splitter_->IsSplit()) {
         v_splitter_->Unsplit();
     }
     GetMenuBar()->Check(ID_G_S_SIDEB, show);
@@ -1694,8 +1709,7 @@ void FFrame::SwitchTextPane(bool show)
     if (show && !main_pane_->IsSplit()) {
         text_pane_->Show(true);
         main_pane_->SplitHorizProp(plot_pane_, text_pane_);
-    }
-    else if (!show && main_pane_->IsSplit()) {
+    } else if (!show && main_pane_->IsSplit()) {
         main_pane_->Unsplit();
     }
     GetMenuBar()->Check(ID_G_S_TEXT, show);
@@ -1828,8 +1842,7 @@ void FFrame::OnGScrollUp (wxCommandEvent&)
     if (scale.logarithm) {
         top = 10 * view.top();
         bottom = 0.1 * view.bottom();
-    }
-    else {
+    } else {
         const double factor = 2.;
         int Y0 = scale.px(0);
         int H = plot_pane_->get_plot()->GetSize().GetHeight();
@@ -1859,18 +1872,13 @@ void FFrame::OnPreviousZoom(wxCommandEvent& event)
 static
 string format_range(const RealRange& r)
 {
-    string s = "[";
-    if (!r.from_inf())
-        s += eS(r.from) + ":";
-    if (!r.to_inf())
-        s += eS(r.to);
-    return s + "]";
+    return r.lo_inf() && r.hi_inf() ? string(" [:]") : r.str();
 }
 
 void FFrame::change_zoom(const RealRange& h, const RealRange& v)
 {
-    string cmd = "plot " + format_range(h) + " " + format_range(v);
-    if (h.from_inf() || h.to_inf() || v.from_inf() || v.to_inf())
+    string cmd = "plot" + format_range(h) + format_range(v);
+    if (h.lo_inf() || h.hi_inf() || v.lo_inf() || v.hi_inf())
         cmd += sidebar_->get_sel_datasets_as_string();
     exec(cmd);
     zoom_hist_.push(ftk->view.str());
@@ -1949,7 +1957,7 @@ void FFrame::update_config_menu(wxMenu *menu)
     wxArrayString filenames;
     int n = wxDir::GetAllFiles(wxGetApp().config_dir, &filenames);
     int config_number_limit = ID_G_LCONF_X_END - ID_G_LCONF_X;
-    for (int i = 0; i < min(n, config_number_limit); ++i) {
+    for (int i = 0; i < std::min(n, config_number_limit); ++i) {
         wxFileName fn(filenames[i]);
         menu->Append(ID_G_LCONF_X + i, fn.GetFullName(), fn.GetFullPath());
     }
@@ -2052,16 +2060,12 @@ void FFrame::OnSaveAsImage(wxCommandEvent&)
 {
     wxFileDialog fdlg(this, wxT("Save main plot as image"),
                       export_dir_, wxT(""),
-// Because of a bug in wxMSW 2.9 (http://trac.wxwidgets.org/ticket/13328),
-// we can't export png on this platform.
-#ifndef __WXMSW__
                       wxT("PNG image (*.png)|*.png;*.PNG|")
-#endif
                       wxT("Windows Bitmap (*.bmp)|*.bmp;*.BMP"),
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     wxSize size = get_main_plot()->get_bitmap().GetSize();
     SaveImageDlgExtra::size = size;
-#ifndef __WXMAC__
+#ifndef __WXOSX_CARBON__
     fdlg.SetExtraControlCreator(&save_image_filedialog_extra);
 #endif
     if (fdlg.ShowModal() == wxID_OK) {
@@ -2150,8 +2154,7 @@ void FFrame::update_toolbar()
     BgManager* bgm = get_main_plot()->bgm();
     toolbar_->ToggleTool(ID_T_STRIP, bgm->has_fn() && bgm->stripped());
     toolbar_->EnableTool(ID_T_RUN, !ftk->mgr.parameters().empty());
-    toolbar_->EnableTool(ID_T_UNDO, ftk->get_fit_container()->can_undo());
-    toolbar_->EnableTool(ID_T_PZ, zoom_hist_.pos() > 0);
+    toolbar_->EnableTool(ID_T_UNDO, ftk->fit_manager()->can_undo());
 }
 
 int FFrame::get_focused_data_index()
@@ -2166,10 +2169,10 @@ vector<int> FFrame::get_selected_data_indices()
 
 string FFrame::get_datasets()
 {
-    if (ftk->get_dm_count() == 1)
+    if (ftk->dk.count() == 1)
         return "";
     vector<int> sel = get_selected_data_indices();
-    if (ftk->get_dm_count() == (int) sel.size())
+    if (ftk->dk.count() == (int) sel.size())
         return "@*: ";
     else
         return "@" + join_vector(sel, " @") + ": ";
@@ -2214,13 +2217,13 @@ string FFrame::get_guess_string(const std::string& name)
         return name + s + ")";
 }
 
-vector<DataAndModel*> FFrame::get_selected_dms()
+vector<Data*> FFrame::get_selected_datas()
 {
     vector<int> sel = get_selected_data_indices();
-    vector<DataAndModel*> dms(sel.size());
+    vector<Data*> datas(sel.size());
     for (size_t i = 0; i < sel.size(); ++i)
-        dms[i] = ftk->get_dm(sel[i]);
-    return dms;
+        datas[i] = ftk->dk.data(sel[i]);
+    return datas;
 }
 
 MainPlot* FFrame::get_main_plot()
@@ -2247,7 +2250,7 @@ void FFrame::update_app_title()
 {
     string title = "Fityk " VERSION;
     int pos = get_focused_data_index();
-    string const& filename = ftk->get_data(pos)->get_filename();
+    string const& filename = ftk->dk.data(pos)->get_filename();
     if (!filename.empty())
         title += " - " + filename;
     SetTitle(s2wx(title));
@@ -2271,8 +2274,7 @@ void FFrame::DoGiveHelp(const wxString& help, bool show)
             }
         }
         text = help;
-    }
-    else {
+    } else {
         text = m_oldStatusText;
         m_oldStatusText.clear();
     }
@@ -2390,7 +2392,6 @@ FToolBar::FToolBar (wxFrame *parent, wxWindowID id)
     //AddTool(ID_T_BAR, wxT("SideBar"),
     //        wxBitmap(right_pane_xpm), wxNullBitmap, wxITEM_CHECK,
     //        wxT("Datasets Pane"), wxT("Show/hide datasets pane"));
-    Realize();
 }
 
 void FToolBar::OnPeakChoice(wxCommandEvent &event)
@@ -2430,16 +2431,14 @@ void FToolBar::OnClickTool (wxCommandEvent& event)
                 if (bgm->can_strip()) {
                     bgm->strip_background();
                     frame->update_menu_recent_baselines();
-                }
-                else
+                } else
                     ToggleTool(ID_T_STRIP, false);
-            }
-            else
+            } else
                 bgm->add_background();
             break;
         }
         case ID_T_RUN:
-            if (ftk->are_independent(frame->get_selected_dms()))
+            if (ftk->are_independent(frame->get_selected_datas()))
                 exec(frame->get_datasets() + "fit");
             else {
                 string ds = frame->get_datasets();
@@ -2470,25 +2469,27 @@ void FToolBar::on_addpeak_hover()
     string info;
     try {
         fityk::Guess g(ftk->get_settings());
-        const DataAndModel* dm = ftk->get_dm(frame->get_focused_data_index());
-        int len = dm->data()->get_n();
-        if (len == 0)
+        const Data* data = ftk->dk.data(frame->get_focused_data_index());
+        if (data->get_n() == 0)
             return;
-        g.initialize(dm, 0, len, -1);
+        g.set_data(data, RealRange(), -1);
         if (frame->peak_type_nr_ >= (int) ftk->get_tpm()->tpvec().size())
             return;
-        if (ftk->get_tpm()->tpvec()[frame->peak_type_nr_]->peak_d) {
-            boost::array<double,4> peak_v = g.estimate_peak_parameters();
-            for (int i = 0; i != 4; ++i)
-                info += (i != 0 ? ", " : "") +
-                        fityk::Guess::peak_traits[i] + ": " + S(peak_v[i]);
+        int traits = ftk->get_tpm()->tpvec()[frame->peak_type_nr_]->traits;
+        const vector<string>* tr_names;
+        vector<double> v;
+        if (traits & fityk::Tplate::kPeak) {
+            tr_names = &fityk::Guess::peak_traits;
+            v = g.estimate_peak_parameters();
+        } else if (traits & fityk::Tplate::kSigmoid) {
+            tr_names = &fityk::Guess::sigmoid_traits;
+            v = g.estimate_sigmoid_parameters();
+        } else {
+            tr_names = &fityk::Guess::linear_traits;
+            v = g.estimate_linear_parameters();
         }
-        else {
-            boost::array<double,3> lin_v = g.estimate_linear_parameters();
-            for (int i = 0; i != 3; ++i)
-                info += (i != 0 ? ", " : "") +
-                        fityk::Guess::linear_traits[i] + ": " + S(lin_v[i]);
-        }
+        for (size_t i = 0; i != v.size(); ++i)
+            info += (i != 0 ? ", " : "") + (*tr_names)[i] + ": " + S(v[i]);
     }
     catch (fityk::ExecuteError &) {
         // ignore peak-outside-of-range or empty-range errors

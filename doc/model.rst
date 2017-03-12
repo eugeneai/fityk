@@ -159,39 +159,49 @@ Variables can be deleted using the command::
 
    delete $variable
 
+
 .. _domain:
 
-Some fitting algorithms randomize the parameters of the model
-(i.e. they randomize simple variables). To effectively use such algorithms,
-the user should specify a :dfn:`domain` for each simple-variable,
-i.e. the minimum and maximum value.
-The domain does not imply any constraints on the value
-the variable can have -- it is only a hint for fitting algorithms.
+Domains
+-------
 
-The default algorithm (Lev-Mar) does not need it, so in most cases you
-do not need to worry about domains.
+Simple-variables may have a :dfn:`domain`,
+which is used for two things when fitting.
 
-Domains are used by the Nelder-Mead method and Genetic Algorithms.
+Most importantly, fitting methods that support bound constraints
+use the domain as lower and/or upper bounds.
+See the section :ref:`bound_constraints` for details.
+
+The other use is for randomizing parameters (simple-variables) of the model.
+Methods that stochastically initialize or modify parameters
+(usually generating a set of initial points) need well-defined
+domains (minimum and maximum values for parameters) to work effectively.
+Such methods include Nelder-Mead simplex and Genetic Algorithms,
+but not the default Lev-Mar method, so in most cases you
+do not need to worry about it.
+
 The syntax is as follows::
 
     $a = ~12.3 [0:20] # initial values are drawn from the (0, 20) range
+    $a = ~12.3 [0:]   # only lower bound
+    $a = ~12.3 [:20]  # only upper bound
+    $a = ~15.0        # domain stays the same
+    $a = ~15.0 []     # no domain
+    $a = ~{$a} [0:20] # domain is set again
 
-If the domain is not specified, the default domain is used, which is
-±\ *p*\ % of the current value, where *p* can be set using the
-:option:`domain_percent` option.
+If the domain is not specified but it is required (for the latter use)
+by the fitting method, we assume it to be ±\ *p*\ % of the current value,
+where *p* can be set using the :option:`domain_percent` option.
 
 Function Types and Functions
 ----------------------------
 
-Function types have names that start with upper case letter,
-e.g. ``Linear`` or ``Voigt``.
+Function types have names that start with upper case letter
+(``Linear``, ``Voigt``).
 
-Functions have names prefixed with the percent symbol,
-e.g. ``%func``. Every function has a type and variables bound to its
-parameters.
-
-Functions can be created by giving the type and the correct
-number of variables in brackets, e.g.::
+Functions have names prefixed with the percent symbol (``%func``).
+Every function has a type and variables bound to its parameters.
+One way to create a function is to specify both type and variables::
 
    %f1 = Gaussian(~66254., ~24.7, ~0.264)
    %f2 = Gaussian(~6e4, $ctr, $b+$c)
@@ -203,7 +213,7 @@ If it is not just a name of a variable, an automatic variable is created.
 In the above examples, two variables were implicitely created for ``%f2``:
 first for value ``6e4`` and the second for ``$b+$c``).
 
-If the names of function's parameters are given (like for ``%f3``),
+If the names of function's parameters are given (like for ``%f3`` above),
 the variables can be given in any order.
 
 Function types can can have specified default values for
@@ -212,7 +222,7 @@ e.g.::
 
    =-> i Pearson7
    Pearson7(height, center, hwhm, shape=2) = height/(1+((x-center)/hwhm)^2*(2^(1/shape)-1))^shape
-   =-> %f4 = Pearson7(height=~66254., center=~24.7, fwhm=~0.264) # no shape is given
+   =-> %f4 = Pearson7(height=~66254., center=~24.7, hwhm=~0.264) # no shape is given
    New function %f4 was created.
 
 Functions can be copied. The following command creates a deep copy
@@ -249,56 +259,60 @@ The list of all functions can be obtained using ``i types``.
 Some formulae here have long parameter names
 (like "height", "center" and "hwhm") replaced with :math:`a_i`
 
-**Gaussian:**
+:ftype:`Gaussian`:
 
 .. math::
    y = a_0
        \exp\left[-\ln(2)\left(\frac{x-a_1}{a_2}\right)^{2}\right]
 
-**SplitGaussian:**
+:math:`a_2` here is half width at half maximum (HWHM=FWHM/2,
+where FWHM stands for full width...), which is proportional to the standard
+deviation: :math:`a_2=\sqrt{2\ln2}\sigma`.
+
+:ftype:`SplitGaussian`:
 
 .. math:: 
    y(x;a_0,a_1,a_2,a_3) = \begin{cases}
    \textrm{Gaussian}(x;a_0,a_1,a_2) & x\leq a_1\\
    \textrm{Gaussian}(x;a_0,a_1,a_3) & x>a_1\end{cases}
 
-**GaussianA:**
+:ftype:`GaussianA`:
 
 .. math:: 
    y = \sqrt{\frac{\ln(2)}{\pi}}\frac{a_0}{a_2}
        \exp\left[-\ln(2)\left(\frac{x-a_1}{a_2}\right)^{2}\right]
 
-**Lorentzian:**
+:ftype:`Lorentzian`:
 
 .. math:: 
    y = \frac{a_0}{1+\left(\frac{x-a_1}{a_2}\right)^2}
 
-**SplitLorentzian:**
+:ftype:`SplitLorentzian`:
 
 .. math:: 
    y(x;a_0,a_1,a_2,a_3) = \begin{cases}
    \textrm{Lorentzian}(x;a_0,a_1,a_2) & x\leq a_1\\
    \textrm{Lorentzian}(x;a_0,a_1,a_3) & x>a_1\end{cases}
 
-**LorentzianA:**
+:ftype:`LorentzianA`:
 
 .. math:: 
    y = \frac{a_0}{\pi a_2\left[1+\left(\frac{x-a_1}{a_2}\right)^2\right]}
 
-**Pearson VII (Pearson7):**
+:ftype:`Pearson VII (Pearson7)`:
 
 .. math:: 
    y = \frac{a_0} {\left[1+\left(\frac{x-a_1}{a_2}\right)^2
                            \left(2^{\frac{1}{a_3}}-1\right)\right]^{a_3}}
 
-**split Pearson VII (SplitPearson7):**
+:ftype:`split Pearson VII (SplitPearson7)`:
 
 .. math:: 
    y(x;a_{0},a_{1},a_{2},a_{3},a_{4},a_{5}) = \begin{cases}
     \textrm{Pearson7}(x;a_0,a_1,a_2,a_4) & x\leq a_1\\
     \textrm{Pearson7}(x;a_0,a_1,a_3,a_5) & x>a_1\end{cases}
 
-**Pearson VII Area (Pearson7A):**
+:ftype:`Pearson VII Area (Pearson7A)`:
 
 .. math:: 
    y = \frac{a_0\Gamma(a_3)\sqrt{2^{\frac{1}{a_3}}-1}}
@@ -307,7 +321,7 @@ Some formulae here have long parameter names
                    \left(2^{\frac{1}{a_3}}-1\right)
             \right]^{a_3}}
 
-**Pseudo-Voigt (PseudoVoigt):**
+:ftype:`Pseudo-Voigt (PseudoVoigt)`:
 
 .. math:: 
    y = a_0 \left[(1-a_3)\exp\left(-\ln(2)\left(\frac{x-a_1}{a_2}\right)^2\right)
@@ -318,14 +332,14 @@ Pseudo-Voigt is a name given to the sum of Gaussian and Lorentzian.
 :math:`a_3` parameters in Pearson VII and Pseudo-Voigt
 are not related.
 
-**split Pseudo-Voigt (SplitPseudoVoigt):**
+:ftype:`split Pseudo-Voigt (SplitPseudoVoigt)`:
 
 .. math:: 
    y(x;a_{0},a_{1},a_{2},a_{3},a_{4},a_{5}) = \begin{cases}
     \textrm{PseudoVoigt}(x;a_0,a_1,a_2,a_4) & x\leq a_1\\
     \textrm{PseudoVoigt}(x;a_0,a_1,a_3,a_5) & x>a_1\end{cases}
 
-**Pseudo-Voigt Area (PseudoVoigtA):**
+:ftype:`Pseudo-Voigt Area (PseudoVoigtA)`:
 
 .. math:: 
    y = a_0 \left[\frac{(1-a_3)\sqrt{\ln(2)}}{a_2\sqrt{\pi}}
@@ -334,7 +348,7 @@ are not related.
                               \left[1+\left(\frac{x-a_1}{a_2}\right)^2\right]}
            \right]
 
-**Voigt:**
+:ftype:`Voigt`:
 
 .. math:: 
    y = \frac
@@ -353,23 +367,30 @@ Voigt is computed according to R.J.Wells,
 *Rapid approximation to the Voigt/Faddeeva function and its derivatives*,
 Journal of Quantitative Spectroscopy & Radiative Transfer
 62 (1999) 29-48.
-(See also: http://www.atm.ox.ac.uk/user/wells/voigt.html).
 The approximation is very fast, but not very exact.
 
-FWHM is estimated using the approximation by Olivero and Longbothum
-(`JQSRT 17, 233 (1977)`__):
-:math:`0.5346 w_L + \sqrt{0.2169 w_L^2 + w_G^2}`.
+FWHM is estimated using an approximation called *modified Whiting*
+(`Olivero and Longbothum, 1977, JQSRT 17, 233`__):
+:math:`0.5346 w_L + \sqrt{0.2169 w_L^2 + w_G^2}`,
+where :math:`w_G=2\sqrt{\ln(2)} |a_2|, w_L=2 |a_2| a_3`.
 
 __ http://dx.doi.org/10.1016/0022-4073(77)90161-3
 
-**VoigtA:**
+:ftype:`VoigtA`:
 
 .. math:: 
    y = \frac{a_0}{\sqrt{\pi}a_2}
        \int_{-\infty}^{+\infty}
            \frac{\exp(-t^2)}{a_3^2+(\frac{x-a_1}{a_2}-t)^2} dt
 
-**Exponentially Modified Gaussian (EMG):**
+:ftype:`split Voigt (SplitVoigt)`:
+
+.. math::
+   y(x;a_{0},a_{1},a_{2},a_{3},a_{4},a_{5}) = \begin{cases}
+    \textrm{Voigt}(x;a_0,a_1,a_2,a_4) & x\leq a_1\\
+    \textrm{Voigt}(x;a_0,a_1,a_3,a_5) & x>a_1\end{cases}
+
+:ftype:`Exponentially Modified Gaussian (EMG)`:
 
 .. math:: 
    y = \frac{ac\sqrt{2\pi}}{2d}
@@ -386,25 +407,36 @@ exponential probability density.
 *c* = Gaussian width,
 *d* = distortion parameter (a.k.a. modification factor or time constant).
 
-**LogNormal:**
+:ftype:`LogNormal`:
 
 .. math::
    y = h \exp\left\{ -\ln(2) \left[
                                    \frac{\ln\left(1+2b\frac{x-c}{w}\right)}{b}
                             \right]^{2} \right\}
 
-**Doniach-Sunjic (DoniachSunjic):**
+:ftype:`Doniach-Sunjic (DoniachSunjic)`:
 
 .. math:: 
    y = \frac{h\left[\frac{\pi a}{2} 
                     + (1-a)\arctan\left(\frac{x-E}{F}\right)\right]}
             {F+(x-E)^2}
 
-**Polynomial5:**
+:ftype:`Polynomial5`:
 
 .. math:: 
    y = a_0 + a_1 x +a_2 x^2 + a_3 x^3 + a_4 x^4 + a_5 x^5
 
+:ftype:`Sigmoid`:
+
+.. math::
+   y = L + \frac{U-L}{1+\exp\left(-\frac{x-x_{mid}}{w}\right)}
+
+:ftype:`FCJAsymm`:
+
+Axial asymmetry peak shape in the Finger, Cox and Jephcoat model, see
+`J. Appl. Cryst. (1994) 27, 892 <http://dx.doi.org/10.1107/S0021889894004218>`_
+and `J. Appl. Cryst. (2013) 46, 1219
+<http://dx.doi.org/10.1107/S0021889813016233>`_.
 
 Variadic Functions
 ------------------
@@ -459,8 +491,11 @@ Example::
 
 - There are special names of parameters that Fityk understands:
 
-  * if the functions is peak-like:
+  * if the functions is peak-like (bell-shaped):
     ``height``, ``center``, ``hwhm``, ``area``,
+
+  * if the functions is S-shaped (sigmoidal) or step-like:
+    ``lower``, ``upper``, ``xmid``, ``wsig``,
 
   * if the function is more like linear:
     ``slope``, ``intercept``, ``avgy``.
@@ -484,7 +519,7 @@ UDFs can be defined in a few ways:
 - as a sum of already defined functions
   (see the ``GLSum`` example below),
 
-- as a splitted (bifurcated) function:
+- as a split (bifurcated) function:
   ``x <`` *expression* ``?`` *Function1(...)* ``:`` *Function2(...)*
   (see the ``SplitL`` example below).
 
@@ -709,6 +744,9 @@ The values of height and width found by the algorithm
 are multiplied by the values of options :option:`height_correction`
 and :option:`width_correction`, respectively. The default value for both
 options is 1.
+
+Another simple algorithm can roughly estimate initial parameters of sigmoidal
+functions.
 
 The linear traits ``slope`` and ``intercept`` are calculated using linear
 regression (without weights of points).

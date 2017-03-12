@@ -1,13 +1,11 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
 #include "logic.h"
 
 #include <stdio.h>
-#include <time.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <string.h>
 #include <locale.h>
 
@@ -16,110 +14,92 @@
 #include "model.h"
 #include "ui.h"
 #include "fit.h"
-#include "guess.h"
 #include "settings.h"
 #include "mgr.h"
-#include "func.h"
 #include "tplate.h"
+#include "var.h"
+#include "luabridge.h"
 #include "lexer.h" // Lexer::kNew
+#include "cparser.h"
+#include "runner.h"
 
 using namespace std;
 
 namespace fityk {
 
-DataAndModel::DataAndModel(Ftk *F, Data* data)
-    : data_(data ? data : new Data(F)), model_(new Model(F))
-{}
-
-bool DataAndModel::has_any_info() const
-{
-    return data()->has_any_info() ||
-           !model()->get_ff().empty() ||
-           !model()->get_zz().empty();
-}
-
-
-Ftk::Ftk()
-    : mgr(this),
-      view(this),
-      default_relative_domain_width(0.1)
+Full::Full()
+    : mgr(this), view(&dk)
 {
     // reading numbers won't work with decimal points different than '.'
     setlocale(LC_NUMERIC, "C");
-    ui_ = new UserInterface(this);
+    cmd_executor_ = new CommandExecutor(this);
+    ui_ = new UserInterface(this, cmd_executor_);
+    lua_bridge_ = new LuaBridge(this);
     initialize();
 }
 
-Ftk::~Ftk()
+Full::~Full()
 {
     destroy();
+    delete lua_bridge_;
     delete ui_;
+    delete cmd_executor_;
 }
 
 // initializations common for ctor and reset()
-void Ftk::initialize()
+void Full::initialize()
 {
-    fit_container_ = new FitMethodsContainer(this);
-    // Settings ctor is using FitMethodsContainer
+    fit_manager_ = new FitManager(this);
+    // Settings ctor is using FitManager
     settings_mgr_ = new SettingsMgr(this);
     tplate_mgr_ = new TplateMgr;
-    tplate_mgr_->add_builtin_types(ui_->parser());
-    view = View(this);
-    dirty_plot_ = true;
-    append_dm();
-    default_dm_ = 0;
-    settings_mgr()->do_srand();
+    tplate_mgr_->add_builtin_types(cmd_executor_->parser());
+    view = View(&dk);
+    ui_->mark_plot_dirty();
+    dk.append(new Data(this, mgr.create_model()));
+    dk.set_default_idx(0);
+    settings_mgr_->do_srand();
 }
 
 // cleaning common for dtor and reset()
-void Ftk::destroy()
+void Full::destroy()
 {
-    ui_->close_lua();
-    purge_all_elements(dms_);
+    dk.clear();
     mgr.do_reset();
-    delete fit_container_;
+    delete fit_manager_;
     delete settings_mgr_;
     delete tplate_mgr_;
 }
 
 // reset everything but UserInterface (and related settings)
-void Ftk::reset()
+void Full::reset()
 {
     int verbosity = get_settings()->verbosity;
     bool autoplot = get_settings()->autoplot;
     destroy();
     initialize();
     if (verbosity != get_settings()->verbosity)
-        settings_mgr()->set_as_number("verbosity", verbosity);
+        settings_mgr_->set_as_number("verbosity", verbosity);
     if (autoplot != get_settings()->autoplot)
-        settings_mgr()->set_as_number("autoplot", autoplot);
+        settings_mgr_->set_as_number("autoplot", autoplot);
 }
 
-int Ftk::append_dm(Data *data)
+void DataKeeper::remove(int d)
 {
-    DataAndModel* dm = new DataAndModel(this, data);
-    dms_.push_back(dm);
-    return dms_.size() - 1;
+    index_check(d);
+    if (datas_.size() == 1) {
+        datas_[0]->model()->clear();
+        datas_[0]->clear();
+    } else {
+        delete datas_[d];
+        datas_.erase(datas_.begin() + d);
+    }
 }
 
-void Ftk::remove_dm(int d)
-{
-    if (d < 0 || d >= size(dms_))
-        throw ExecuteError("there is no such dataset: @" + S(d));
-    delete dms_[d];
-    dms_.erase(dms_.begin() + d);
-    if (dms_.empty())
-        append_dm();
-}
-
-Fit* Ftk::get_fit() const
+Fit* Full::get_fit() const
 {
     string method_name = get_settings()->fitting_method;
-    v_foreach(Fit*, i, get_fit_container()->methods())
-        if ((*i)->name == method_name)
-            return *i;
-    throw ExecuteError("fitting method `" + method_name + "' not available.");
-    return NULL;
+    return fit_manager()->get_method(method_name);
 }
 
 namespace {
@@ -146,8 +126,7 @@ vector<int> parse_int_range(string const& s, int maximum)
         if (dots == string::npos) {
             int n = atoi_all(*i);
             values.push_back(n);
-        }
-        else {
+        } else {
             int m = atoi_all(i->substr(0, dots));
             string n_ = i->substr(dots+2);
             int n = n_.empty() ? maximum : atoi_all(i->substr(dots+2));
@@ -169,51 +148,49 @@ vector<int> parse_int_range(string const& s, int maximum)
 }
 } //anonymous namespace
 
-
-void Ftk::import_dataset(int slot, string const& filename,
-                         string const& format, string const& options)
+void DataKeeper::import_dataset(int slot, const string& data_path,
+                                const string& format, const string& options,
+                                BasicContext* ctx, ModelManager &mgr)
 {
     const bool new_dataset = (slot == Lexer::kNew);
-
-    // split "filename" (e.g. "foo.dat:1:2,3::") into real filename
+    // split "data_path" (e.g. "foo.dat:1:2,3::") into filename
     // and colon-separated indices
-    int count_colons = count(filename.begin(), filename.end(), ':');
-    string fn;
+    int count_colons = ::count(data_path.begin(), data_path.end(), ':');
+    LoadSpec spec;
     vector<int> indices[3];
-    vector<int> block_range;
     if (count_colons >= 4) {
         // take filename
         string::size_type fn_end = string::npos;
         for (int i = 0; i < 4; ++i)
-            fn_end = filename.rfind(':', fn_end - 1);
-        fn = filename.substr(0, fn_end);
+            fn_end = data_path.rfind(':', fn_end - 1);
+        spec.path = data_path.substr(0, fn_end);
 
         // blocks
-        string::size_type end_pos = filename.size();
-        string::size_type bpos = filename.rfind(':', end_pos - 1);
+        string::size_type end_pos = data_path.size();
+        string::size_type bpos = data_path.rfind(':', end_pos - 1);
         string::size_type blen = end_pos - bpos - 1;
         if (blen > 0) {
-            int block_count = Data::count_blocks(fn, format, options);
-            string range = filename.substr(bpos+1, blen);
-            block_range = parse_int_range(range, block_count-1);
+            int block_count = Data::count_blocks(spec.path, format, options);
+            string range = data_path.substr(bpos+1, blen);
+            spec.blocks = parse_int_range(range, block_count-1);
         }
         end_pos = bpos;
 
-        int first_block = block_range.empty() ? 0 : block_range[0];
-        int col_count = Data::count_columns(fn, format, options, first_block);
+        int first_block = spec.blocks.empty() ? 0 : spec.blocks[0];
+        int col_count = Data::count_columns(spec.path, format, options,
+                                            first_block);
         for (int i = 2; i >= 0; --i) {
-            string::size_type pos = filename.rfind(':', end_pos - 1);
+            string::size_type pos = data_path.rfind(':', end_pos - 1);
             string::size_type len = end_pos - pos - 1;
             if (len > 0) {
-                string range = filename.substr(pos+1, len);
+                string range = data_path.substr(pos+1, len);
                 indices[i] = parse_int_range(range, col_count);
             }
             end_pos = pos;
         }
         assert(fn_end == end_pos);
-    }
-    else {
-        fn = filename;
+    } else {
+        spec.path = data_path;
     }
 
     if (indices[0].size() > 1)
@@ -223,46 +200,54 @@ void Ftk::import_dataset(int slot, string const& filename,
     if (indices[1].size() > 1 && !new_dataset)
         throw ExecuteError("Multiple y columns can be specified only with @+");
 
-    int idx_x = indices[0].empty() ?  INT_MAX : indices[0][0];
+    if (!indices[0].empty())
+        spec.x_col = indices[0][0];
+    if (!indices[2].empty())
+        spec.sig_col = indices[2][0];
+
+    spec.format = format;
+    spec.options = options;
     if (indices[1].empty())
-        indices[1].push_back(INT_MAX);
-    int idx_s = indices[2].empty() ? INT_MAX : indices[2][0];
-
+        indices[1].push_back(LoadSpec::NN);
     for (size_t i = 0; i < indices[1].size(); ++i) {
-        if (new_dataset && (get_dm_count() != 1 || get_dm(0)->has_any_info())) {
-            // load data into new slot
-            auto_ptr<Data> data(new Data(this));
-            data->load_file(fn, idx_x, indices[1][i], idx_s,
-                            block_range, format, options);
-            append_dm(data.release());
-        }
-        else {
-            // if new_dataset is true, there is only one dataset
-            int n = new_dataset ? 0 : slot;
-            get_data(n)->load_file(fn, idx_x, indices[1][i], idx_s,
-                                   block_range, format, options);
-        }
-    }
-
-    if (get_dm_count() == 1) {
-        RealRange r; // default value: [:]
-        view.change_view(r, r, vector1(0));
+        spec.y_col = indices[1][i];
+        do_import_dataset(new_dataset, slot, spec, ctx, mgr);
     }
 }
 
-void Ftk::outdated_plot()
+
+void DataKeeper::do_import_dataset(bool new_dataset, int slot,
+                                   const LoadSpec& spec,
+                                   BasicContext* ctx, ModelManager &mgr)
 {
-    dirty_plot_ = true;
-    fit_container_->outdated_error_cache();
+    Data *d;
+    auto_ptr<Data> auto_d;
+    if (!new_dataset)
+        d = data(slot);
+    else if (count() == 1 && data(0)->completely_empty()) // reusable slot 0
+        d = data(0);
+    else { // new slot
+        auto_d.reset(new Data(ctx, mgr.create_model()));
+        d = auto_d.get();
+    }
+    d->load_file(spec);
+    if (auto_d.get())
+        append(auto_d.release());
 }
 
-bool Ftk::are_independent(std::vector<DataAndModel*> dms) const
+void Full::outdated_plot()
+{
+    ui_->mark_plot_dirty();
+    fit_manager_->outdated_error_cache();
+}
+
+bool Full::are_independent(std::vector<Data*> dd) const
 {
     for (size_t i = 0; i != mgr.variables().size(); ++i)
         if (mgr.get_variable(i)->is_simple()) {
             bool dep = false;
-            v_foreach(DataAndModel*, dm, dms)
-                if ((*dm)->model()->is_dependent_on_var(i)) {
+            v_foreach(Data*, d, dd)
+                if ((*d)->model()->is_dependent_on_var(i)) {
                     if (dep)
                         return false;
                     dep = true;
@@ -270,5 +255,51 @@ bool Ftk::are_independent(std::vector<DataAndModel*> dms) const
         }
     return true;
 }
+
+static
+bool is_fityk_script(string filename)
+{
+    const char *magic = "# Fityk";
+
+    FILE *f = fopen(filename.c_str(), "rb");
+    if (!f)
+        return false;
+
+    if (endswith(filename, ".fit") || endswith(filename, ".fityk") ||
+            endswith(filename, ".fit.gz") || endswith(filename, ".fityk.gz")) {
+        fclose(f);
+        return true;
+    }
+
+    const int magic_len = strlen(magic);
+    char buffer[32];
+    char *ret = fgets(buffer, magic_len, f);
+    fclose(f);
+    return ret && !strncmp(magic, buffer, magic_len);
+}
+
+void Full::process_cmd_line_arg(const string& arg)
+{
+    if (startswith(arg, "=->"))
+        ui()->exec_and_log(string(arg, 3));
+    else if (endswith(arg, ".lua"))
+        lua_bridge()->exec_lua_script(arg);
+    else if (is_fityk_script(arg))
+        ui()->exec_fityk_script(arg);
+    else {
+        ui()->exec_and_log("@+ <'" + arg + "'");
+    }
+}
+
+bool Full::check_syntax(const string& str)
+{
+    return cmd_executor_->parser()->check_syntax(str);
+}
+
+void Full::parse_and_execute_line(const string& str)
+{
+    return cmd_executor_->raw_execute_line(str);
+}
+
 
 } // namespace fityk

@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -13,8 +13,8 @@ using namespace std;
 
 namespace fityk {
 
-vector<realt> Function::calc_val_xx(1);
-vector<realt> Function::calc_val_yy(1);
+vector<realt> Function::bufx_(1);
+vector<realt> Function::bufy_(1);
 
 Function::Function(const Settings* settings,
                    const string &name_,
@@ -24,52 +24,19 @@ Function::Function(const Settings* settings,
       used_vars_(vars),
       settings_(settings),
       tp_(tp),
-      av_(vars.size())
+      av_(vars.size()),
+      center_idx_(-1)
 {
 }
 
 void Function::init()
 {
     center_idx_ = index_of_element(tp_->fargs, "center");
+    if (center_idx_ == -1 && (tp_->traits & Tplate::kSigmoid))
+        center_idx_ = index_of_element(tp_->fargs, "xmid");
     if (av_.size() != tp_->fargs.size())
         throw ExecuteError("Function " + tp_->name + " requires "
            + S(tp_->fargs.size()) + " argument(s), got " + S(av_.size()) + ".");
-}
-
-Function* Function::factory(const Settings* settings,
-                            const string &name, const Tplate::Ptr tp,
-                            const vector<string> &vars)
-{
-    if (false) {}
-
-#define FACTORY_FUNC(NAME) \
-    else if (tp->name == #NAME) \
-        return new Func##NAME(settings, name, tp, vars);
-
-    FACTORY_FUNC(Constant)
-    FACTORY_FUNC(Linear)
-    FACTORY_FUNC(Quadratic)
-    FACTORY_FUNC(Cubic)
-    FACTORY_FUNC(Polynomial4)
-    FACTORY_FUNC(Polynomial5)
-    FACTORY_FUNC(Polynomial6)
-    FACTORY_FUNC(Gaussian)
-    FACTORY_FUNC(SplitGaussian)
-    FACTORY_FUNC(Lorentzian)
-    FACTORY_FUNC(Pearson7)
-    FACTORY_FUNC(SplitPearson7)
-    FACTORY_FUNC(PseudoVoigt)
-    FACTORY_FUNC(Voigt)
-    FACTORY_FUNC(VoigtA)
-    FACTORY_FUNC(EMG)
-    FACTORY_FUNC(DoniachSunjic)
-    FACTORY_FUNC(PielaszekCube)
-    FACTORY_FUNC(LogNormal)
-    FACTORY_FUNC(Spline)
-    FACTORY_FUNC(Polyline)
-
-    else
-        return NULL;
 }
 
 void Function::do_precomputations(const vector<Variable*> &variables)
@@ -78,7 +45,7 @@ void Function::do_precomputations(const vector<Variable*> &variables)
     multi_.clear();
     for (int i = 0; i < used_vars_.get_count(); ++i) {
         const Variable *v = variables[used_vars_.get_idx(i)];
-        av_[i] = v->get_value();
+        av_[i] = v->value();
         v_foreach (Variable::ParMult, j, v->recursive_derivatives())
             multi_.push_back(Multi(i, *j));
     }
@@ -97,22 +64,20 @@ void Function::calculate_value(const vector<realt> &x, vector<realt> &y) const
 {
     realt left, right;
     double cut_level = settings_->function_cutoff;
-    bool r = get_nonzero_range(cut_level, left, right);
-    if (r) {
+    if (cut_level != 0. && get_nonzero_range(cut_level, left, right)) {
         int first = lower_bound(x.begin(), x.end(), left) - x.begin();
         int last = upper_bound(x.begin(), x.end(), right) - x.begin();
         this->calculate_value_in_range(x, y, first, last);
-    }
-    else
+    } else
         this->calculate_value_in_range(x, y, 0, x.size());
 }
 
 realt Function::calculate_value(realt x) const
 {
-    calc_val_xx[0] = x;
-    calc_val_yy[0] = 0.;
-    calculate_value_in_range(calc_val_xx, calc_val_yy, 0, 1);
-    return calc_val_yy[0];
+    bufx_[0] = x;
+    bufy_[0] = 0.;
+    calculate_value_in_range(bufx_, bufy_, 0, 1);
+    return bufy_[0];
 }
 
 void Function::calculate_value_deriv(const vector<realt> &x,
@@ -122,14 +87,20 @@ void Function::calculate_value_deriv(const vector<realt> &x,
 {
     realt left, right;
     double cut_level = settings_->function_cutoff;
-    bool r = get_nonzero_range(cut_level, left, right);
-    if (r) {
+    if (cut_level != 0. && get_nonzero_range(cut_level, left, right)) {
         int first = lower_bound(x.begin(), x.end(), left) - x.begin();
         int last = upper_bound(x.begin(), x.end(), right) - x.begin();
         this->calculate_value_deriv_in_range(x, y, dy_da, in_dx, first, last);
-    }
-    else
+    } else
         this->calculate_value_deriv_in_range(x, y, dy_da, in_dx, 0, x.size());
+}
+
+int Function::max_param_pos() const
+{
+    int n = 0;
+    v_foreach (Multi, j, multi_)
+        n = max(j->p + 1, n);
+    return n;
 }
 
 bool Function::get_center(realt* a) const
@@ -141,7 +112,7 @@ bool Function::get_center(realt* a) const
     return false;
 }
 
-bool Function::get_iwidth(realt* a) const
+bool Function::get_ibreadth(realt* a) const
 {
     realt area, height;
     if (this->get_area(&area) && this->get_height(&height)) {
@@ -193,8 +164,7 @@ void Function::replace_symbols_with_values(string &t, const char* num_fmt) const
                     new_word = "("+value+")";
                 t.replace(pos, k, new_word);
                 pos += new_word.size();
-            }
-            else
+            } else
                 pos++;
         }
     }
@@ -210,8 +180,7 @@ string Function::get_current_formula(const string& x, const char* num_fmt) const
             t += value;
             t += (i+1 < nv() ? ", " : ")");
         }
-    }
-    else {
+    } else {
         t = tp_->rhs;
         replace_symbols_with_values(t, num_fmt);
     }
@@ -228,24 +197,24 @@ int Function::get_param_nr(const string& param) const
     return n;
 }
 
-realt Function::get_param_value(const string& param) const
+realt Function::get_param_value(const string& param) const  throw(ExecuteError)
 {
     realt a;
     if (!param.empty() && islower(param[0]))
         return av_[get_param_nr(param)];
     else if (param == "Center" && get_center(&a)) {
         return a;
-    }
-    else if (param == "Height" && get_height(&a)) {
+    } else if (param == "Height" && get_height(&a)) {
         return a;
-    }
-    else if (param == "FWHM" && get_fwhm(&a)) {
+    } else if (param == "FWHM" && get_fwhm(&a)) {
         return a;
-    }
-    else if (param == "Area" && get_area(&a)) {
+    } else if (param == "Area" && get_area(&a)) {
         return a;
-    }
-    else
+    } else if (param == "IB" && get_ibreadth(&a)) {
+        return a;
+    } else if (get_other_prop(param, &a)) {
+        return a;
+    } else
         throw ExecuteError("%" + name + " (" + tp_->name
                            + ") has no parameter `" + param + "'");
 }
@@ -265,118 +234,6 @@ realt Function::numarea(realt x1, realt x2, int nsteps) const
     for (int i = 1; i < nsteps-1; ++i)
         a += yy[i];
     return a*h;
-}
-
-/// search x in [x1, x2] for which %f(x)==val,
-/// x1, x2, val: f(x1) <= val <= f(x2) or f(x2) <= val <= f(x1)
-/// bisection + Newton-Raphson
-realt Function::find_x_with_value(realt x1, realt x2, realt val,
-                                  int max_iter) const
-{
-    realt y1 = calculate_value(x1) - val;
-    realt y2 = calculate_value(x2) - val;
-    if ((y1 > 0 && y2 > 0) || (y1 < 0 && y2 < 0))
-        throw ExecuteError("Value " + S(val) + " is not bracketed by "
-                           + S(x1) + "(" + S(y1+val) + ") and "
-                           + S(x2) + "(" + S(y2+val) + ").");
-    int n = 0;
-    v_foreach (Multi, j, multi_)
-        n = max(j->p + 1, n);
-    vector<realt> dy_da(n+1);
-    if (y1 == 0)
-        return x1;
-    if (y2 == 0)
-        return x2;
-    if (y1 > 0)
-        swap(x1, x2);
-    realt t = (x1 + x2) / 2.;
-    for (int i = 0; i < max_iter; ++i) {
-        //check if converged
-        if (is_eq(x1, x2))
-            return (x1+x2) / 2.;
-
-        // calculate f and df
-        calc_val_xx[0] = t;
-        calc_val_yy[0] = 0;
-        dy_da.back() = 0;
-        calculate_value_deriv(calc_val_xx, calc_val_yy, dy_da);
-        realt f = calc_val_yy[0] - val;
-        realt df = dy_da.back();
-
-        // narrow range
-        if (f == 0.)
-            return t;
-        else if (f < 0)
-            x1 = t;
-        else // f > 0
-            x2 = t;
-
-        // select new guess point
-        realt dx = -f/df * 1.02; // 1.02 is to jump to the other side of point
-        if ((t+dx > x2 && t+dx > x1) || (t+dx < x2 && t+dx < x1)  // outside
-                            || i % 20 == 19) {                 // precaution
-            //bisection
-            t = (x1 + x2) / 2.;
-        }
-        else {
-            t += dx;
-        }
-    }
-    throw ExecuteError("The search has not converged in " + S(max_iter)
-                       + " steps");
-}
-
-/// finds root of derivative, using bisection method
-realt Function::find_extremum(realt x1, realt x2, int max_iter) const
-{
-    int n = 0;
-    v_foreach (Multi, j, multi_)
-        n = max(j->p + 1, n);
-    vector<realt> dy_da(n+1);
-
-    // calculate df
-    calc_val_xx[0] = x1;
-    dy_da.back() = 0;
-    calculate_value_deriv(calc_val_xx, calc_val_yy, dy_da);
-    realt y1 = dy_da.back();
-
-    calc_val_xx[0] = x2;
-    dy_da.back() = 0;
-    calculate_value_deriv(calc_val_xx, calc_val_yy, dy_da);
-    realt y2 = dy_da.back();
-
-    if ((y1 > 0 && y2 > 0) || (y1 < 0 && y2 < 0))
-        throw ExecuteError("Derivatives at " + S(x1) + " and " + S(x2)
-                           + " have the same sign.");
-    if (y1 == 0)
-        return x1;
-    if (y2 == 0)
-        return x2;
-    if (y1 > 0)
-        swap(x1, x2);
-    for (int i = 0; i < max_iter; ++i) {
-        realt t = (x1 + x2) / 2.;
-
-        // calculate df
-        calc_val_xx[0] = t;
-        dy_da.back() = 0;
-        calculate_value_deriv(calc_val_xx, calc_val_yy, dy_da);
-        realt df = dy_da.back();
-
-        // narrow range
-        if (df == 0.)
-            return t;
-        else if (df < 0)
-            x1 = t;
-        else // df > 0
-            x2 = t;
-
-        //check if converged
-        if (is_eq(x1, x2))
-            return (x1+x2) / 2.;
-    }
-    throw ExecuteError("The search has not converged in " + S(max_iter)
-                       + " steps");
 }
 
 } // namespace fityk

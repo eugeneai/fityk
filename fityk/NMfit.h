@@ -1,8 +1,8 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__NMFIT__H__
-#define FITYK__NMFIT__H__
+#ifndef FITYK_NMFIT_H_
+#define FITYK_NMFIT_H_
 
 #include <vector>
 #include "common.h"
@@ -26,16 +26,15 @@ struct Vertex
 class NMfit : public Fit
 {
 public:
-    NMfit(Ftk* F, const char* name) : Fit(F, name) {}
-    virtual void init(); // called before autoiter()
-    void autoiter();
+    NMfit(Full* F, const char* fname) : Fit(F, fname) {}
+    virtual double run_method(std::vector<realt>* best_a);
 private:
-    int iteration;
     std::vector<Vertex> vertices;
     std::vector<Vertex>::iterator best, s_worst /*second worst*/, worst;
     std::vector<realt> coord_sum;
     realt volume_factor;
 
+    void init();
     void find_best_worst();
     void change_simplex();
     realt try_new_worst(realt f);

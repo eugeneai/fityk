@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -8,8 +8,9 @@
 #include "numfuncs.h"
 #include "settings.h"
 #include "logic.h"
+#include "model.h"
 
-#include <math.h>
+#include <cmath>
 #include <string.h>
 #include <stdlib.h>
 #include <algorithm>
@@ -19,6 +20,10 @@
 
 using std::string;
 using std::vector;
+
+#if XYLIB_VERSION < 10500
+typedef shared_ptr<const xylib::DataSet> dataset_shared_ptr;
+#endif
 
 namespace fityk {
 
@@ -35,6 +40,18 @@ string get_file_basename(const string& path)
 }
 
 
+Data::Data(BasicContext* ctx, Model *model)
+        : ctx_(ctx), model_(model),
+          x_step_(0.), has_sigma_(false), xps_source_energy_(0.)
+{
+}
+
+Data::~Data()
+{
+    model_->destroy();
+}
+
+
 string Data::get_info() const
 {
     string s;
@@ -42,13 +59,15 @@ string Data::get_info() const
         s = "No data points.";
     else
         s = S(p_.size()) + " points, " + S(active_.size()) + " active.";
-    if (!filename_.empty())
-        s += "\nFilename: " + filename_;
-    if (given_x_ != INT_MAX || given_y_ != INT_MAX || given_s_ != INT_MAX)
-        s += "\nColumns: " + (given_x_ != INT_MAX ? S(given_x_) : S("_"))
-                    + ", " + (given_y_ != INT_MAX ? S(given_y_) : S("_"));
-    if (given_s_ != INT_MAX)
-        s += ", " + S(given_s_);
+    if (!spec_.path.empty())
+        s += "\nFilename: " + spec_.path;
+    if (spec_.x_col != LoadSpec::NN || spec_.y_col != LoadSpec::NN ||
+            spec_.sig_col != LoadSpec::NN)
+        s += "\nColumns: "
+               + (spec_.x_col != LoadSpec::NN ? S(spec_.x_col) : S("_"))
+               + ", " + (spec_.y_col != LoadSpec::NN ? S(spec_.y_col) : S("_"));
+    if (spec_.sig_col != LoadSpec::NN)
+        s += ", " + S(spec_.sig_col);
     if (!title_.empty())
         s += "\nData title: " + title_;
     if (active_.size() != p_.size())
@@ -56,18 +75,24 @@ string Data::get_info() const
     return s;
 }
 
+// does not clear model
 void Data::clear()
 {
-    filename_ = "";
+    spec_ = LoadSpec();
     title_ = "";
-    given_x_ = given_y_ = given_s_ = INT_MAX;
-    given_options_.clear();
-    given_blocks_.clear();
     p_.clear();
     x_step_ = 0;
     active_.clear();
     has_sigma_ = false;
+    xps_source_energy_ = 0.;
 }
+
+bool Data::completely_empty() const
+{
+    return is_empty() && get_title().empty() &&
+           model()->get_ff().empty() && model()->get_zz().empty();
+}
+
 
 void Data::post_load()
 {
@@ -75,31 +100,29 @@ void Data::post_load()
         return;
     string inf = S(p_.size()) + " points.";
     if (!has_sigma_) {
-        string dds = F_->get_settings()->default_sigma;
+        string dds = ctx_->get_settings()->default_sigma;
         if (dds == "sqrt") {
-            for (vector<Point>::iterator i = p_.begin(); i < p_.end(); i++)
+            for (vector<Point>::iterator i = p_.begin(); i < p_.end(); ++i)
                 i->sigma = i->y > 1. ? sqrt (i->y) : 1.;
             inf += " No explicit std. dev. Set as sqrt(y)";
-        }
-        else if (dds == "one") {
-            for (vector<Point>::iterator i = p_.begin(); i < p_.end(); i++)
+        } else if (dds == "one") {
+            for (vector<Point>::iterator i = p_.begin(); i < p_.end(); ++i)
                 i->sigma = 1.;
             inf += " No explicit std. dev. Set as equal 1.";
-        }
-        else
+        } else
             assert(0);
     }
-    F_->msg(inf);
+    ctx_->msg(inf);
     update_active_p();
 }
 
 int Data::load_arrays(const vector<realt> &x, const vector<realt> &y,
-                      const vector<realt> &sigma, const string &data_title)
+                      const vector<realt> &sigma, const string &title)
 {
     assert(x.size() == y.size());
     assert(sigma.empty() || sigma.size() == y.size());
     clear();
-    title_ = data_title;
+    title_ = title;
     p_.resize(y.size());
     if (sigma.empty())
         for (size_t i = 0; i != y.size(); ++i)
@@ -124,15 +147,14 @@ void Data::set_points(const vector<Point> &p)
 
 void Data::revert()
 {
-    if (filename_.empty())
+    if (spec_.path.empty())
         throw ExecuteError("Dataset can't be reverted, it was not loaded "
                            "from file");
     string old_title = title_;
-    string old_filename = filename_;
-    // this->filename_ should not be passed by ref to load_file(), because it's
-    // cleared before being used
-    load_file(old_filename, given_x_, given_y_, given_s_,
-              given_blocks_, given_format_, given_options_);
+    LoadSpec old_spec = spec_;
+    // this->spec_ should not be passed by ref to load_file()
+    // because path is cleared before being used
+    load_file(old_spec);
     title_ = old_title;
 }
 
@@ -157,7 +179,7 @@ void Data::load_data_sum(const vector<const Data*>& dd, const string& op)
         // data should be sorted after apply_operation()
     clear();
     title_ = new_title;
-    filename_ = new_filename;
+    spec_.path = new_filename;
     p_ = new_p;
     has_sigma_ = true;
     find_step();
@@ -168,9 +190,12 @@ void Data::load_data_sum(const vector<const Data*>& dd, const string& op)
 void Data::add_one_point(realt x, realt y, realt sigma)
 {
     Point pt(x, y, sigma);
-    vector<Point>::iterator a = upper_bound(p_.begin(), p_.end(), pt);
-    int idx = a - p_.begin();
-    p_.insert(a, pt);
+    vector<Point>::iterator pi = upper_bound(p_.begin(), p_.end(), pt);
+    int idx = pi - p_.begin();
+    p_.insert(pi, pt);
+    vector<int>::iterator ai = lower_bound(active_.begin(), active_.end(), idx);
+    for (vector<int>::iterator i = ai; i != active_.end(); ++i)
+        *i += 1;
     active_.insert(upper_bound(active_.begin(), active_.end(), idx), idx);
     // (fast) x_step_ update
     if (p_.size() < 2)
@@ -214,69 +239,82 @@ static string tr_opt(string options)
     return options;
 }
 
-int Data::count_blocks(const string& fn,
+int Data::count_blocks(const string& filename,
                        const string& format, const string& options)
 {
     try {
-        shared_ptr<const xylib::DataSet> xyds(
-                        xylib::cached_load_file(fn, format, tr_opt(options)));
+        dataset_shared_ptr xyds(xylib::cached_load_file(filename,
+                                                     format, tr_opt(options)));
         return xyds->get_block_count();
     } catch (const std::runtime_error& e) {
         throw ExecuteError(e.what());
     }
 }
 
-int Data::count_columns(const string& fn,
+int Data::count_columns(const string& filename,
                         const string& format, const string& options,
                         int first_block)
 {
     try {
-        shared_ptr<const xylib::DataSet> xyds(
-                        xylib::cached_load_file(fn, format, tr_opt(options)));
+        dataset_shared_ptr xyds(xylib::cached_load_file(filename,
+                                                     format, tr_opt(options)));
         return xyds->get_block(first_block)->get_column_count();
     } catch (const std::runtime_error& e) {
         throw ExecuteError(e.what());
     }
 }
 
-// for column indices, INT_MAX is used as not given
-void Data::load_file (const string& fn,
-                      int idx_x, int idx_y, int idx_s,
-                      const vector<int>& blocks,
-                      const string& format, const string& options)
+void Data::verify_options(const xylib::DataSet* ds, const string& options)
 {
-    if (fn.empty())
+    std::string::size_type start_pos = options.find_first_not_of(" \t");
+    std::string::size_type pos = start_pos;
+    while (pos != std::string::npos) {
+        pos = options.find_first_of(" \t", start_pos);
+        string word = options.substr(start_pos, pos-start_pos);
+        // is_valid_option() is marked as const in since xylib 1.4
+        if (!const_cast<xylib::DataSet*>(ds)->is_valid_option(word))
+            ctx_->ui()->warn("No such option for file type " +
+                             string(ds->fi->name) + ": " + word);
+        start_pos = pos+1;
+    }
+}
+
+
+void Data::load_file(const LoadSpec& spec)
+{
+    if (spec.path.empty())
         return;
 
     string block_name;
     try {
-        shared_ptr<const xylib::DataSet> xyds(
-                        xylib::cached_load_file(fn, format, tr_opt(options)));
+        string ds_options = tr_opt(spec.options);
+        dataset_shared_ptr xyds(
+            xylib::cached_load_file(spec.path, spec.format, ds_options));
+        verify_options(xyds.get(), ds_options);
         clear(); //removing previous file
-        vector<int> bb = blocks.empty() ? vector1(0) : blocks;
+        vector<int> bb = spec.blocks.empty() ? vector1(0) : spec.blocks;
 
         v_foreach (int, b, bb) {
             assert(xyds);
             const xylib::Block* block = xyds->get_block(*b);
             const xylib::Column& xcol
-                = block->get_column(idx_x != INT_MAX ?  idx_x : 1);
+               = block->get_column(spec.x_col != LoadSpec::NN ? spec.x_col : 1);
             const xylib::Column& ycol
-                = block->get_column(idx_y != INT_MAX ?  idx_y : 2);
+               = block->get_column(spec.y_col != LoadSpec::NN ? spec.y_col : 2);
             int n = block->get_point_count();
             if (n < 5 && bb.size() == 1)
-                F_->ui()->warn("Only " + S(n) + " data points found in file.");
+                ctx_->ui()->warn("Only "+S(n)+" data points found in file.");
 
-            if (idx_s == INT_MAX) {
+            p_.reserve(p_.size() + n);
+            if (spec.sig_col == LoadSpec::NN) {
                 for (int i = 0; i < n; ++i) {
                     p_.push_back(Point(xcol.get_value(i), ycol.get_value(i)));
                 }
-            }
-            else {
-                const xylib::Column& scol
-                    = block->get_column(idx_s != INT_MAX ?  idx_s : 2);
+            } else {
+                const xylib::Column& scol = block->get_column(spec.sig_col);
                 for (int i = 0; i < n; ++i) {
                     p_.push_back(Point(xcol.get_value(i), ycol.get_value(i),
-                                      scol.get_value(i)));
+                                       scol.get_value(i)));
                 }
                 has_sigma_ = true;
             }
@@ -293,11 +331,14 @@ void Data::load_file (const string& fn,
                 block_name += ycol.get_name();
                 if (!xcol.get_name().empty())
                     block_name += "(" + xcol.get_name() + ")";
-            }
-            else if (!block->get_name().empty()) {
+            } else if (!block->get_name().empty()) {
                 if (!block_name.empty())
                     block_name += "/";
                 block_name += block->get_name();
+            }
+            if (block->meta.has_key("source energy")) {
+                const string& energy = block->meta.get("source energy");
+                xps_source_energy_ = strtod(energy.c_str(), NULL);
             }
         }
     } catch (const std::runtime_error& e) {
@@ -307,39 +348,20 @@ void Data::load_file (const string& fn,
     if (!block_name.empty())
         title_ = block_name;
     else {
-        title_ = get_file_basename(fn);
-        if (idx_x != INT_MAX && idx_y != INT_MAX)
-            title_ += ":" + S(idx_x) + ":" + S(idx_y);
+        title_ = get_file_basename(spec.path);
+        if (spec.x_col != LoadSpec::NN && spec.y_col != LoadSpec::NN)
+            title_ += ":" + S(spec.x_col) + ":" + S(spec.y_col);
     }
 
-    if (x_step_ == 0 || blocks.size() > 1) {
+    if (x_step_ == 0 || spec.blocks.size() > 1) {
         sort_points();
         find_step();
     }
 
-    filename_ = fn;
-    given_x_ = idx_x;
-    given_y_ = idx_y;
-    given_s_ = idx_s;
-    given_blocks_ = blocks;
-    given_options_ = options;
-
+    spec_ = spec;
     post_load();
 }
 
-/*
-double Data::get_y_at (double x) const
-{
-    int n = get_upper_bound_ac (x);
-    if (n > size(active_) || n <= 0)
-        return 0;
-    double y1 = get_y (n - 1);
-    double y2 = get_y (n);
-    double x1 = get_x (n - 1);
-    double x2 = get_x (n);
-    return y1 + (y2 - y1) * (x - x1) / (x2 - x1);
-}
-*/
 
 // std::is_sorted() is added C++0x
 template <typename T>
@@ -366,6 +388,7 @@ void Data::update_active_p()
     // post: active_ sorted
 {
     active_.clear();
+    active_.reserve(p_.size());
     for (int i = 0; i < size(p_); i++)
         if (p_[i].is_active)
             active_.push_back(i);
@@ -376,14 +399,14 @@ void Data::update_active_p()
 string Data::range_as_string() const
 {
     if (active_.empty()) {
-        F_->ui()->warn("File not loaded or all points inactive.");
+        ctx_->ui()->warn("File not loaded or all points inactive.");
         return "[]";
     }
     vector<Point>::const_iterator old_p = p_.begin() + active_[0];
     double left =  old_p->x;
     string s = "[" + S (left) + " : ";
     for (vector<int>::const_iterator i = active_.begin() + 1;
-                                                    i != active_.end(); i++) {
+                                                    i != active_.end(); ++i) {
         if (p_.begin() + *i != old_p + 1) {
             double right = old_p->x;
             left = p_[*i].x;
@@ -404,8 +427,7 @@ void Data::find_step()
     if (len < 2) {
         x_step_ = 0.;
         return;
-    }
-    else if (len == 2) {
+    } else if (len == 2) {
         x_step_ = p_[1].x - p_[0].x;
         return;
     }
@@ -420,7 +442,7 @@ void Data::find_step()
 
     double min_step, max_step, step;
     min_step = max_step = p_[1].x - p_[0].x;
-    for (vector<Point>::iterator i = p_.begin() + 2; i < p_.end(); i++) {
+    for (vector<Point>::iterator i = p_.begin() + 2; i < p_.end(); ++i) {
         step = i->x - (i-1)->x;
         min_step = std::min (min_step, step);
         max_step = std::max (max_step, step);
@@ -437,18 +459,14 @@ void Data::sort_points()
     sort(p_.begin(), p_.end());
 }
 
-int Data::get_lower_bound_ac(double x) const
+std::pair<int,int> Data::get_index_range(const RealRange& range) const
 {
     //pre: p_.x is sorted, active_ is sorted
-    int pit = lower_bound(p_.begin(), p_.end(), Point(x,0)) - p_.begin();
-    return lower_bound(active_.begin(), active_.end(), pit) - active_.begin();
-}
-
-int Data::get_upper_bound_ac(double x) const
-{
-    //pre: p_.x is sorted, active_ is sorted
-    int pit = upper_bound(p_.begin(), p_.end(), Point(x,0)) - p_.begin();
-    return upper_bound(active_.begin(), active_.end(), pit) - active_.begin();
+    int p1 = lower_bound(p_.begin(), p_.end(), Point(range.lo,0)) - p_.begin();
+    int p2 = upper_bound(p_.begin(), p_.end(), Point(range.hi,0)) - p_.begin();
+    int a1 = lower_bound(active_.begin(), active_.end(), p1) - active_.begin();
+    int a2 = upper_bound(active_.begin(), active_.end(), p2) - active_.begin();
+    return std::make_pair(a1, a2);
 }
 
 vector<Point>::const_iterator Data::get_point_at(double x) const

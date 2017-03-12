@@ -1,10 +1,10 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 /// Lexical analyser. Takes characters and yields tokens.
 
-#ifndef FITYK__LEXER__H__
-#define FITYK__LEXER__H__
+#ifndef FITYK_LEXER_H_
+#define FITYK_LEXER_H_
 
 #include <string>
 
@@ -29,8 +29,8 @@ enum TokenType
 
     // special tokens:
 
-    // returned only by get_filename_token(), not by get_token()
-    kTokenFilename,
+    // returned only by get_word_token(), not by get_token()
+    kTokenWord,
     // expression as string, never returned by Lexer, used only in Parser
     kTokenExpr,
     // variable or expression meant to create a new variable,
@@ -68,7 +68,7 @@ enum TokenType
     kTokenQMark, // ?
     kTokenBang, // !
 
-    kTokenNop, // end of line (returned by Lexer) or placeholder (in Parser)
+    kTokenNop // end of line (returned by Lexer) or placeholder (in Parser)
 };
 
 const char* tokentype2str(TokenType tt);
@@ -102,7 +102,7 @@ public:
     static std::string get_string(const Token& token);
 
     Lexer(const char* input)
-        : input_(input), cur_(input), peeked_(false) {}
+        : input_(input), cur_(input), peeked_(false), tok_() {}
 
     Token get_token();
 
@@ -124,10 +124,13 @@ public:
     // Unlike get_token(), allow '*' in $variables and %functions. 
     Token get_glob_token();
 
-    // Filename is expected by parser. Reads any sequence of non-blank
-    // characters (with exception of ' and #) as a file.
-    // The filename can be inside 'single quotes'.
-    Token get_filename_token();
+    // Used mostly for filenames. Reads a quoted string or a sequence
+    // of non-blank and non-[;#] characters as a word.
+    // Returns kTokenWord, kTokenString or kTokenNop.
+    Token get_word_token();
+
+    // Reads the same as get_word_token() plus blanks. Returns kTokenRest
+    Token get_rest_of_cmd();
 
     // Reads rest of the line and returns kTokenRest
     Token get_rest_of_line();
@@ -151,4 +154,4 @@ private:
 std::string token2str(const Token& token);
 
 } // namespace fityk
-#endif // FITYK__LEXER__H__
+#endif // FITYK_LEXER_H_

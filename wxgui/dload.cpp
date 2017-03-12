@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 ///  Custom Data Load Dialog (DLoadDlg) and helpers
 
@@ -8,13 +8,9 @@
 #include <wx/file.h>
 #include <wx/filename.h>
 
-#include <xylib/xylib.h>
-#include <xylib/cache.h>
-
 #include "dload.h"
 #include "xybrowser.h"
 #include "frame.h"  // frame->add_recent_data_file()
-#include "plot.h" // scale_tics_step()
 #include "fityk/logic.h" // ftk->get_settings()
 #include "fityk/settings.h"
 #include "fityk/data.h" // get_file_basename()
@@ -58,17 +54,19 @@ DLoadDlg::DLoadDlg(wxWindow* parent, int data_idx, Data* data,
         browser_->filectrl->SetDirectory(dir);
     browser_->update_file_options();
 
-    if (data->get_given_x() != INT_MAX)
+    if (data->get_given_x() != fityk::LoadSpec::NN)
         browser_->x_column->SetValue(data->get_given_x());
-    if (data->get_given_y() != INT_MAX)
+    if (data->get_given_y() != fityk::LoadSpec::NN)
         browser_->y_column->SetValue(data->get_given_y());
-    if (data->get_given_s() != INT_MAX) {
-        browser_->std_dev_cb->SetValue(true);
+    if (data->get_given_s() != fityk::LoadSpec::NN) {
+        browser_->std_dev_b->SetValue(true);
         browser_->s_column->SetValue(data->get_given_s());
+    } else if (S(ftk->get_settings()->default_sigma) == "sqrt") {
+        browser_->sd_sqrt_rb->SetValue(true);
+    } else {
+        browser_->sd_1_rb->SetValue(true);
     }
-
-    bool def_sqrt = (S(ftk->get_settings()->default_sigma) == "sqrt");
-    browser_->sd_sqrt_cb->SetValue(def_sqrt);
+    browser_->update_s_column();
 
     Connect(open_here_btn_->GetId(), wxEVT_COMMAND_BUTTON_CLICKED,
             wxCommandEventHandler(DLoadDlg::OnOpenHere));
@@ -82,42 +80,59 @@ void DLoadDlg::exec_command(bool replace)
     string cols;
     int x = browser_->x_column->GetValue();
     int y = browser_->y_column->GetValue();
-    bool has_s = browser_->std_dev_cb->GetValue();
+    bool has_s = browser_->std_dev_b->GetValue();
+    int sig = browser_->s_column->GetValue();
     int b = browser_->block_ch->GetSelection();
     // default parameter values are not passed explicitely
     if (x != 1 || y != 2 || has_s || b != 0) {
         cols = ":" + S(x) + ":" + S(y) + ":";
         if (has_s)
-            cols += S(browser_->s_column->GetValue());
+            cols += S(sig);
         cols += ":";
         if (b != 0)
             cols += S(b);
     }
 
-    string cmd;
-    bool def_sqrt = (S(ftk->get_settings()->default_sigma) == "sqrt");
-    bool set_sqrt = browser_->sd_sqrt_cb->GetValue();
-    bool sigma_in_file = browser_->std_dev_cb->GetValue();
-    if (!sigma_in_file && set_sqrt != def_sqrt) {
-        if (set_sqrt)
-            cmd = "with default_sigma=sqrt ";
-        else
-            cmd = "with default_sigma=one ";
+    string with_options;
+    if (!has_s) {
+        bool default_sqrt = (S(ftk->get_settings()->default_sigma) == "sqrt");
+        bool set_sqrt = browser_->sd_sqrt_rb->GetValue();
+        if (set_sqrt != default_sqrt) {
+            if (set_sqrt)
+                with_options = "with default_sigma=sqrt ";
+            else
+                with_options = "with default_sigma=one ";
+        }
     }
     wxArrayString paths;
     browser_->filectrl->GetPaths(paths);
-    for (size_t i = 0; i < paths.GetCount(); ++i) {
-        string filename = wx2s(paths[i]);
-        exec("@" + (replace ? S(data_idx_) : S("+")) +
-                  " < '" + filename + cols + "'");
-        if (browser_->title_tc->IsEnabled()) {
-            wxString t = browser_->title_tc->GetValue().Trim();
-            if (!t.IsEmpty()) {
-                int slot = (replace ? data_idx_ : ftk->get_dm_count() - 1);
-                exec("@" + S(slot) + ": title = '" + wx2s(t) + "'");
-            }
+    string trailer;
+    string lua_trailer;
+    string fmt = browser_->get_filetype();
+    if (fmt != "" || browser_->comma_cb->GetValue()) {
+        trailer = " " + (fmt == "" ? "_" : fmt);
+        lua_trailer = ", '" + fmt + "'";
+        if (browser_->comma_cb->GetValue()) {
+            trailer += " decimal_comma";
+            lua_trailer += ", 'decimal_comma'";
         }
-        frame->add_recent_data_file(filename);
+    }
+    for (size_t i = 0; i < paths.GetCount(); ++i) {
+        string cmd;
+        if (paths[i].Find('\'') == wxNOT_FOUND)
+            cmd = "@" + (replace ? S(data_idx_) : S("+")) +
+                   " < '" + wx2s(paths[i]) + cols + "'" + trailer;
+        else // very special case
+            cmd = "lua F:load(" + S(replace ? data_idx_ : -1) +
+                   ", [[" + wx2s(paths[i]) + "]], " + S(b) + ", " +
+                   S(x) + ", " + S(y) + ", " + S(sig) + lua_trailer + ")";
+        exec(with_options + cmd);
+        wxString title = browser_->title_tc->GetValue().Trim();
+        if (!title.empty() && title != browser_->auto_title_) {
+            int slot = (replace ? data_idx_ : ftk->dk.count() - 1);
+            exec("@" + S(slot) + ": title = '" + wx2s(title) + "'");
+        }
+        frame->add_recent_data_file(paths[i]);
     }
 }
 

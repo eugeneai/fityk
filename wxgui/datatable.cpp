@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #include "datatable.h"
@@ -115,8 +115,7 @@ public:
               wxGridTableMessage msg(this, wxGRIDTABLE_NOTIFY_ROWS_APPENDED, 1);
               GetView()->ProcessTableMessage(msg);
             }
-        }
-        else {
+        } else {
             if (value == GetValueAsDouble(row, col))
                 return;
             char buffer[32];

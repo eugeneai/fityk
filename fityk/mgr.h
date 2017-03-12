@@ -1,54 +1,46 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__MGR__H__
-#define FITYK__MGR__H__
+#ifndef FITYK_MGR_H_
+#define FITYK_MGR_H_
 
 #include <map>
-#include "common.h"
+#include "fityk.h"
 #include "tplate.h" // Tplate::Ptr
 
 namespace fityk {
 
 class Variable;
 class Function;
-class Ftk;
+class BasicContext;
 class Model;
 struct FunctionSum;
 
 /// keeps all functions and variables
-class FITYK_API VariableManager
+class FITYK_API ModelManager
 {
 public:
     static bool is_auto(const std::string& name)
         { return !name.empty() && name[0] == '_'; }
 
-    VariableManager(const Ftk* F);
-    ~VariableManager();
-    void register_model(Model *m) { models_.push_back(m); }
-    void unregister_model(const Model *m);
+    ModelManager(const BasicContext* ctx);
+    ~ModelManager();
+
+    Model* create_model();
+    void delete_model(Model *m);
 
     //int assign_variable(const std::string &name, const std::string &rhs);
+    int assign_var_copy(const std::string &name, const std::string &orig);
     int make_variable(const std::string &name, VMData* vd);
-    int add_variable(Variable* new_var);
-
-    void sort_variables();
-
-    std::string assign_variable_copy(const Variable* orig,
-                                     const std::map<int,std::string>& varmap);
 
     void delete_variables(const std::vector<std::string> &name);
 
-    ///returns -1 if not found or idx in variables if found
+    /// returns -1 if not found or idx in variables if found
     int find_variable_nr(const std::string &name) const;
     const Variable* find_variable(const std::string &name) const;
-    int find_nr_var_handling_param(int p) const;
-    const Variable* find_variable_handling_param(int p) const
-                { return variables_[find_nr_var_handling_param(p)]; }
-
-    /// search for "simple" variable which handles parameter par
-    /// returns -1 if not found or idx in variables if found
-    //int find_parameter_variable(int par) const;
+    int gpos_to_vpos(int gpos) const;
+    const Variable* gpos_to_var(int gpos) const
+                                    { return variables_[gpos_to_vpos(gpos)]; }
 
     /// remove unreffered variables and parameters
     void remove_unreferred();
@@ -56,6 +48,7 @@ public:
     void auto_remove_functions();
     bool is_function_referred(int n) const;
 
+    // returns the global array of parameters
     const std::vector<realt>& parameters() const { return parameters_; }
     const std::vector<Variable*>& variables() const { return variables_; }
     const Variable* get_variable(int n) const { return variables_[n]; }
@@ -87,13 +80,14 @@ public:
         get_variable_references(const std::string &name) const;
     void update_indices_in_models();
     void do_reset();
+    std::vector<std::string> share_par_cmd(const std::string& par, bool share);
 
     std::string next_var_name(); ///generate name for "anonymous" variable
     std::string next_func_name(); ///generate name for "anonymous" function
 
 
 private:
-    const Ftk* F_;
+    const BasicContext* ctx_;
     std::vector<Model*> models_;
     std::vector<realt> parameters_;
     /// sorted, a doesn't depend on b if idx(a)>idx(b)
@@ -102,13 +96,19 @@ private:
     int var_autoname_counter_; ///for names for "anonymous" variables
     int func_autoname_counter_; ///for names for "anonymous" functions
 
+    int add_variable(Variable* new_var, bool old_domain);
+    void sort_variables();
+    int copy_and_add_variable(const std::string& name,
+                              const Variable* orig,
+                              const std::map<int,std::string>& varmap);
     int add_func(Function* func);
-    //Variable *create_variable(const std::string &name, const std::string &rhs);
     //std::string get_or_make_variable(const std::string& func);
     bool is_variable_referred(int i, std::string *first_referrer = NULL);
     void reindex_all();
     std::string name_var_copy(const Variable* v);
     void update_indices(FunctionSum& sum);
+    void eval_tilde(std::vector<int>::iterator op,
+                    std::vector<int>& code, const std::vector<realt>& nums);
 
 };
 

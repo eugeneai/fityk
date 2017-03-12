@@ -10,9 +10,9 @@ Fityk |version| - User's Manual
 
    intro
    getstarted
-   lang
    data
    model
    fit
+   script
    ref
 

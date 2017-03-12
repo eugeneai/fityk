@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// virtual machine - calculates expressions using by executing bytecode
 
@@ -112,21 +112,20 @@ string op2str(int op)
         OP_(DATASET) OP_(DT_SUM_SAME_X) OP_(DT_AVG_SAME_X) OP_(DT_SHIRLEY_BG)
         OP_(OPEN_ROUND)  OP_(OPEN_SQUARE)
     }
-    return S(op);
-};
+    return S(op); // unreachable (if all OPs are listed above)
+}
 #undef OP_
 
 string vm2str(vector<int> const& code, vector<realt> const& data)
 {
     string s;
-    v_foreach (int, i, code) {
+    for (vector<int>::const_iterator i = code.begin(); i < code.end(); ++i) {
         s += op2str(*i);
         if (*i == OP_NUMBER) {
             ++i;
             assert (*i >= 0 && *i < size(data));
             s += "[" + S(*i) + "](" + S(data[*i]) + ")";
-        }
-        else if (VMData::has_idx(*i)) {
+        } else if (VMData::has_idx(*i)) {
             ++i;
             s += "[" + S(*i) + "]";
         }
@@ -146,7 +145,7 @@ void VMData::append_number(realt d)
 
 void VMData::replace_symbols(const vector<realt>& vv)
 {
-    vm_foreach (int, op, code_) {
+    for (vector<int>::iterator op = code_.begin(); op < code_.end(); ++op) {
         if (*op == OP_SYMBOL) {
             *op = OP_NUMBER;
             ++op;
@@ -159,8 +158,7 @@ void VMData::replace_symbols(const vector<realt>& vv)
                 *op = numbers_.size();
                 numbers_.push_back(value);
             }
-        }
-        else if (has_idx(*op))
+        } else if (has_idx(*op))
             ++op;
     }
 }
@@ -170,7 +168,7 @@ void VMData::replace_symbols(const vector<realt>& vv)
 /// The same transformation is used in OpTree. 
 void VMData::flip_indices()
 {
-    vm_foreach (int, i, code_)
+    for (vector<int>::iterator i = code_.begin(); i < code_.end(); ++i)
         if (has_idx(*i)) {
             ++i;
             *i = -1 - *i;
@@ -179,7 +177,7 @@ void VMData::flip_indices()
 
 bool VMData::has_op(int op) const
 {
-    v_foreach (int, i, code_) {
+    for (vector<int>::const_iterator i = code_.begin(); i < code_.end(); ++i) {
         if (*i == op)
             return true;
         if (has_idx(*i))
@@ -193,7 +191,7 @@ inline realt as_bool(realt d) { return fabs(d) < 0.5 ? 0 : 1; }
 #define STACK_OFFSET_CHANGE(ch) stackPtr+=(ch)
 
 inline
-void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
+void run_const_op(const Full* F, const std::vector<realt>& numbers,
                   vector<int>::const_iterator& i,
                   realt*& stackPtr,
                   const int n,
@@ -277,11 +275,11 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
             break;
         case OP_SUM_F:
             i++;
-            *stackPtr = F->get_model(*i)->value(*stackPtr);
+            *stackPtr = F->dk.get_model(*i)->value(*stackPtr);
             break;
         case OP_SUM_Z:
             i++;
-            *stackPtr = F->get_model(*i)->zero_shift(*stackPtr);
+            *stackPtr = F->dk.get_model(*i)->zero_shift(*stackPtr);
             break;
         case OP_NUMAREA:
             i += 2;
@@ -289,12 +287,10 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
             if (*(i-1) == OP_FUNC) {
                 *stackPtr = F->mgr.get_function(*i)->numarea(*stackPtr,
                                     *(stackPtr+1), iround(*(stackPtr+2)));
-            }
-            else if (*(i-1) == OP_SUM_F) {
-                *stackPtr = F->get_model(*i)->numarea(*stackPtr,
+            } else if (*(i-1) == OP_SUM_F) {
+                *stackPtr = F->dk.get_model(*i)->numarea(*stackPtr,
                                     *(stackPtr+1), iround(*(stackPtr+2)));
-            }
-            else // OP_SUM_Z
+            } else // OP_SUM_Z
                 throw ExecuteError("Z.numarea() is not implemented. "
                                    "Does anyone need it?");
             break;
@@ -303,14 +299,12 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
             i += 2;
             STACK_OFFSET_CHANGE(-2);
             if (*(i-1) == OP_FUNC) {
-                *stackPtr = F->mgr.get_function(*i)->find_x_with_value(
+                *stackPtr = find_x_with_value(F->mgr.get_function(*i),
                                   *stackPtr, *(stackPtr+1), *(stackPtr+2));
-            }
-            else if (*(i-1) == OP_SUM_F) {
-                throw ExecuteError("F.findx() is not implemented. "
-                                   "Does anyone need it?");
-            }
-            else // OP_SUM_Z
+            } else if (*(i-1) == OP_SUM_F) {
+                *stackPtr = find_x_with_value(F->dk.get_model(*i),
+                                  *stackPtr, *(stackPtr+1), *(stackPtr+2));
+            } else // OP_SUM_Z
                 throw ExecuteError("Z.findx() is not implemented. "
                                    "Does anyone need it?");
             break;
@@ -319,14 +313,12 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
             i += 2;
             STACK_OFFSET_CHANGE(-1);
             if (*(i-1) == OP_FUNC) {
-                *stackPtr = F->mgr.get_function(*i)->find_extremum(*stackPtr,
-                                                            *(stackPtr+1));
-            }
-            else if (*(i-1) == OP_SUM_F) {
-                throw ExecuteError("F.extremum() is not implemented. "
-                                   "Does anyone need it?");
-            }
-            else // OP_SUM_Z
+                *stackPtr = find_extremum(F->mgr.get_function(*i),
+                                          *stackPtr, *(stackPtr+1));
+            } else if (*(i-1) == OP_SUM_F) {
+                *stackPtr = find_extremum(F->dk.get_model(*i),
+                                          *stackPtr, *(stackPtr+1));
+            } else // OP_SUM_Z
                 throw ExecuteError("Z.extremum() is not implemented. "
                                    "Does anyone need it?");
             break;
@@ -493,7 +485,7 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
 
         case OP_DATASET:
             throw ExecuteError("@n can not be used in this context");
-            break;
+            //break; // unreachable
 
         default:
             //cerr << "Unknown operator in VM code: " << *i << endl;
@@ -502,7 +494,7 @@ void run_const_op(const Ftk* F, const std::vector<realt>& numbers,
 }
 
 inline
-void run_mutab_op(const Ftk* F, const std::vector<realt>& numbers,
+void run_mutab_op(const Full* F, const std::vector<realt>& numbers,
                   vector<int>::const_iterator& i,
                   realt*& stackPtr,
                   const int n,
@@ -641,6 +633,11 @@ void run_func_op(const vector<realt>& numbers, vector<int>::const_iterator &i,
 
         case OP_TILDE:
             // used for default values in Runner::make_func_from_template()
+            // compare with ModelManager::eval_tilde()
+            assert(*(i+1) == OP_NUMBER);
+            STACK_OFFSET_CHANGE(+1);
+            *stackPtr = numbers[*(i+2)];
+            i += (*(i+3) == OP_TILDE ? 3 : 6);
             break;
 
         default:
@@ -702,8 +699,7 @@ realt ExprCalculator::calculate_custom(const vector<realt>& custom_val) const
                 *stackPtr = custom_val[*i];
             else
                 throw ExecuteError("[internal] variable mismatch");
-        }
-        else
+        } else
             run_const_op(F_, vm_.numbers(), i, stackPtr, 0, dummy, dummy);
         if (stackPtr - stack >= 16)
             throw ExecuteError("stack overflow");
@@ -723,17 +719,15 @@ realt run_code_for_variable(const VMData& vm,
         if (*i == OP_SYMBOL) {
             STACK_OFFSET_CHANGE(+1);
             ++i; // skip the next one
-            *stackPtr = variables[*i]->get_value();
-        }
-        else if (*i == OP_PUT_DERIV) {
+            *stackPtr = variables[*i]->value();
+        } else if (*i == OP_PUT_DERIV) {
             ++i;
             // the OP_PUT_DERIV opcode is followed by a number n,
             // the derivative is calculated with respect to n'th variable
             assert(*i < (int) derivatives.size());
             derivatives[*i] = *stackPtr;
             STACK_OFFSET_CHANGE(-1);
-        }
-        else
+        } else
             run_func_op(vm.numbers(), i, stackPtr);
     }
     assert(stackPtr == stack);
@@ -750,16 +744,14 @@ realt run_code_for_custom_func(const VMData& vm, realt x,
         if (*i == OP_X) {
             STACK_OFFSET_CHANGE(+1);
             *stackPtr = x;
-        }
-        else if (*i == OP_PUT_DERIV) {
+        } else if (*i == OP_PUT_DERIV) {
             ++i;
             // the OP_PUT_DERIV opcode is followed by a number n,
             // the derivative is calculated with respect to n'th variable
             assert(*i < (int) derivatives.size());
             derivatives[*i] = *stackPtr;
             STACK_OFFSET_CHANGE(-1);
-        }
-        else
+        } else
             run_func_op(vm.numbers(), i, stackPtr);
     }
     assert(stackPtr == stack);
@@ -776,8 +768,7 @@ realt run_code_for_custom_func_value(const VMData& vm, realt x,
         if (*i == OP_X) {
             STACK_OFFSET_CHANGE(+1);
             *stackPtr = x;
-        }
-        else
+        } else
             run_func_op(vm.numbers(), i, stackPtr);
     }
     assert(stackPtr == stack);

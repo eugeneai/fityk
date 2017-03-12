@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -11,6 +11,7 @@ using namespace std;
 
 namespace fityk {
 
+static
 Function* init_component(const string& func_name, const Tplate::Component& c,
                          vector<Variable*>& variables, const Settings* settings)
 {
@@ -21,8 +22,7 @@ Function* init_component(const string& func_name, const Tplate::Component& c,
         if (j->single_symbol()) {
             int idx = j->code()[1];
             var_name = variables[idx]->name;
-        }
-        else {
+        } else {
             var_name = "_i" + S(variables.size() + 1);
             VMData vm = *j;
             if (vm.has_op(OP_TILDE))
@@ -41,10 +41,10 @@ Function* init_component(const string& func_name, const Tplate::Component& c,
 
 
 CompoundFunction::CompoundFunction(const Settings* settings,
-                                   const string &name,
+                                   const string &fname,
                                    const Tplate::Ptr tp,
                                    const vector<string> &vars)
-    : Function(settings, name, tp, vars)
+    : Function(settings, fname, tp, vars)
 {
 }
 
@@ -119,6 +119,17 @@ string CompoundFunction::get_current_formula(const string& x,
     return t;
 }
 
+bool CompoundFunction::is_symmetric() const
+{
+    realt ctr;
+    if (!get_center(&ctr))
+        return false;
+    v_foreach (Function*, i, intern_functions_)
+        if (!(*i)->is_symmetric())
+            return false;
+    return true;
+}
+
 bool CompoundFunction::get_center(realt* a) const
 {
     if (Function::get_center(a))
@@ -190,12 +201,13 @@ bool CompoundFunction::get_nonzero_range(double level,
 ///////////////////////////////////////////////////////////////////////
 
 CustomFunction::CustomFunction(const Settings* settings,
-                               const string &name,
+                               const string &fname,
                                const Tplate::Ptr tp,
                                const vector<string> &vars)
-    : Function(settings, name, tp, vars),
+    : Function(settings, fname, tp, vars),
       // don't use nv() here, it's not set until init()
-      derivatives_(vars.size()+1)
+      derivatives_(vars.size()+1),
+      value_offset_(0)
 {
 }
 
@@ -252,8 +264,7 @@ void CustomFunction::calculate_value_deriv_in_range(const vector<realt> &xx,
             v_foreach (Multi, j, multi_)
                 dy_da[dyn*i+j->p] += derivatives_[j->n] * j->mult;
             dy_da[dyn*i+dyn-1] += derivatives_.back();
-        }
-        else {
+        } else {
             v_foreach (Multi, j, multi_)
                 dy_da[dyn*i+j->p] += dy_da[dyn*i+dyn-1]
                                        * derivatives_[j->n] * j->mult;
@@ -284,10 +295,10 @@ string CustomFunction::get_current_formula(const string& x,
 ///////////////////////////////////////////////////////////////////////
 
 SplitFunction::SplitFunction(const Settings* settings,
-                             const string &name,
+                             const string &fname,
                              const Tplate::Ptr tp,
                              const vector<string> &vars)
-    : Function(settings, name, tp, vars)
+    : Function(settings, fname, tp, vars), left_(NULL), right_(NULL)
 {
 }
 
@@ -342,7 +353,7 @@ void SplitFunction::calculate_value_in_range(const vector<realt> &xx,
                                              vector<realt> &yy,
                                              int first, int last) const
 {
-    realt xsplit = intern_variables_.back()->get_value();
+    realt xsplit = intern_variables_.back()->value();
     int t = lower_bound(xx.begin(), xx.end(), xsplit) - xx.begin();
     left_->calculate_value_in_range(xx, yy, first, t);
     right_->calculate_value_in_range(xx, yy, t, last);
@@ -354,7 +365,7 @@ void SplitFunction::calculate_value_deriv_in_range(const vector<realt> &xx,
                                                    bool in_dx,
                                                    int first, int last) const
 {
-    realt xsplit = intern_variables_.back()->get_value();
+    realt xsplit = intern_variables_.back()->value();
     int t = lower_bound(xx.begin(), xx.end(), xsplit) - xx.begin();
     left_-> calculate_value_deriv_in_range(xx, yy, dy_da, in_dx, first, t);
     right_-> calculate_value_deriv_in_range(xx, yy, dy_da, in_dx, t, last);
@@ -363,7 +374,7 @@ void SplitFunction::calculate_value_deriv_in_range(const vector<realt> &xx,
 string SplitFunction::get_current_formula(const string& x,
                                           const char* num_fmt) const
 {
-    realt xsplit = intern_variables_.back()->get_value();
+    realt xsplit = intern_variables_.back()->value();
     return "x < " + S(xsplit) + " ? " + left_->get_current_formula(x, num_fmt)
                               + " : " + right_->get_current_formula(x, num_fmt);
 }
@@ -381,6 +392,37 @@ bool SplitFunction::get_center(realt* a) const
     realt c2;
     return left_->get_center(a) && right_->get_center(&c2) && is_eq(*a, c2);
 }
+
+bool SplitFunction::get_fwhm(realt* a) const
+{
+    realt c1, c2;
+    realt xsplit = intern_variables_.back()->value();
+    bool two_halves = left_->is_symmetric() && right_->is_symmetric() &&
+                      left_->get_center(&c1) && is_eq(c1, xsplit) &&
+                      right_->get_center(&c2) && is_eq(c2, xsplit);
+    realt fwhm1, fwhm2;
+    if (two_halves && left_->get_fwhm(&fwhm1) && right_->get_fwhm(&fwhm2)) {
+        *a = (fwhm1 + fwhm2) / 2.;
+        return true;
+    } else
+        return false;
+}
+
+bool SplitFunction::get_area(realt* a) const
+{
+    realt c1, c2;
+    realt xsplit = intern_variables_.back()->value();
+    bool two_halves = left_->is_symmetric() && right_->is_symmetric() &&
+                      left_->get_center(&c1) && is_eq(c1, xsplit) &&
+                      right_->get_center(&c2) && is_eq(c2, xsplit);
+    realt area1, area2;
+    if (two_halves && left_->get_area(&area1) && right_->get_area(&area2)) {
+        *a = (area1 + area2) / 2.;
+        return true;
+    } else
+        return false;
+}
+
 
 bool SplitFunction::get_nonzero_range(double level,
                                       realt& left, realt& right) const

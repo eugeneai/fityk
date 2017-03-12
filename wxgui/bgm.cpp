@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 // BgManager - background (baseline) manager. Used for manual, interactive
@@ -16,7 +16,7 @@
 using namespace std;
 using fityk::PointQ;
 using fityk::PointD;
-using fityk::VariableManager;
+using fityk::ModelManager;
 
 BgManager::BgManager(const Scale& x_scale)
     : x_scale_(x_scale), spline_(true), data_idx_(-1)
@@ -46,7 +46,7 @@ string BgManager::get_bg_name() const
 
 void BgManager::set_stripped(bool value)
 {
-    stripped_.resize(ftk->get_dm_count());
+    stripped_.resize(ftk->dk.count());
     stripped_[data_idx_] = value;
 }
 
@@ -151,10 +151,10 @@ void BgManager::define_bg_func()
                     ftk->mgr.find_variable(f->used_vars().get_name(2*i));
                 const fityk::Variable *vy =
                     ftk->mgr.find_variable(f->used_vars().get_name(2*i+1));
-                if (!VariableManager::is_auto(vx->name) || !vx->is_constant() ||
-                        S(vx->get_value()) != S(bg_[i].x) ||
-                    !VariableManager::is_auto(vy->name) || !vy->is_constant() ||
-                        S(vy->get_value()) != S(bg_[i].y)) {
+                if (!ModelManager::is_auto(vx->name) || !vx->is_constant() ||
+                        S(vx->value()) != S(bg_[i].x) ||
+                    !ModelManager::is_auto(vy->name) || !vy->is_constant() ||
+                        S(vy->value()) != S(bg_[i].y)) {
                     the_same = false;
                     break;
                 }
@@ -174,7 +174,7 @@ void BgManager::strip_background()
 {
     if (bg_.empty())
         return;
-    wxString name = wxDateTime::Now().Format(wxT("%Y-%m-%d %T"));
+    wxString name = wxDateTime::Now().Format("%Y-%m-%d %H:%M:%S");
     name += wxString::Format(wxT(" (%d points)"), (int) bg_.size());
     recent_bg_.push_back(make_pair(name, bg_));
     define_bg_func();
@@ -220,7 +220,7 @@ void BgManager::set_as_recent(int n)
 void BgManager::set_as_convex_hull()
 {
     fityk::SimplePolylineConvex convex;
-    const fityk::Data* data = ftk->get_data(data_idx_);
+    const fityk::Data* data = ftk->dk.data(data_idx_);
     for (int i = 0; i < data->get_n(); ++i)
         convex.push_point(data->get_x(i), data->get_y(i));
     const vector<PointD>& vertices = convex.get_vertices();
@@ -282,4 +282,30 @@ void BgManager::read_recent_baselines()
             recent_bg_.push_back(make_pair(name, q));
         }
     }
+}
+
+void BgManager::set_bg_subtracted(const string& index_list, bool value)
+{
+    stripped_.resize(ftk->dk.count());
+    const char* str = index_list.c_str();
+    while (*str != '\0') {
+        char *endptr;
+        int n = strtol(str, &endptr, 10);
+        if (str == endptr)
+            break;
+        if (is_index(n, stripped_) &&
+                ftk->mgr.find_function_nr("bg"+S(n)) != -1) {
+            stripped_[n] = value;
+        }
+        str = endptr;
+    }
+}
+
+string BgManager::get_bg_subtracted() const
+{
+    string r;
+    for (size_t i = 0; i != stripped_.size(); ++i)
+        if (stripped_[i])
+            r += " " + S(i);
+    return r;
 }

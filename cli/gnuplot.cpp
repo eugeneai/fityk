@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 // CLI-only file
@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
-#include <math.h>
+#include <cmath>
 #include <string>
 #include <algorithm>
 #ifndef _WIN32
@@ -17,21 +17,14 @@
 #endif
 
 #include "fityk/fityk.h"
-#if HAVE_CONFIG_H
-#  include <config.h> // HAVE_FINITE
-#endif
-
+#include "fityk/common.h" // is_finite()
 
 #define GNUPLOT_PATH "gnuplot"
 
 using namespace std;
 using fityk::Point;
+using fityk::is_finite;
 
-extern fityk::Fityk* ftk; // defined in cli/main.cpp
-
-#ifndef HAVE_FINITE
-static int finite(double x) { return x == x; }
-#endif
 
 GnuPlot::GnuPlot()
     : failed_(false), gnuplot_pipe_(NULL)
@@ -49,7 +42,11 @@ void GnuPlot::fork_and_make_pipe()
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
     int fd[2];
-    pipe(fd);
+    int ret = pipe(fd);
+    if (ret == -1) {
+        perror("pipe");
+        exit(1);
+    }
     pid_t childpid = fork();
     if (childpid == -1) {
         perror("fork");
@@ -64,13 +61,12 @@ void GnuPlot::fork_and_make_pipe()
         if (fd[0] > 2)
             close(fd[0]);
         //putenv("PAGER=");
-        execlp(GNUPLOT_PATH, GNUPLOT_PATH, /*"-",*/ NULL);
+        execlp(GNUPLOT_PATH, GNUPLOT_PATH, /*"-",*/ (char*) NULL);
         // if we are here, sth went wrong
-        fprintf(stderr,
-                "** Calling `" GNUPLOT_PATH "' failed. Plotting disabled. **");
-        exit(0); // terminate only the child process 
-    }
-    else {
+        fprintf(stderr, "** Calling `" GNUPLOT_PATH
+                        "' failed. Plotting disabled. **\n");
+        abort(); // exit() messed with open files.
+    } else {
         // Parent process closes up input side of pipe
         close(fd[0]);
         gnuplot_pipe_ = fdopen(fd[1], "w"); //fdopen() - POSIX, not ANSI
@@ -87,7 +83,7 @@ bool GnuPlot::test_gnuplot_pipe()
     fprintf(gnuplot_pipe_, " "); //pipe test
     fflush(gnuplot_pipe_);
     if (errno != 0) // errno == EPIPE if the pipe doesn't work
-        failed_ = false;
+        failed_ = true;
     return errno == 0;
 #endif //_WIN32
 }
@@ -121,10 +117,9 @@ void GnuPlot::plot()
     // data
     if (has_points) {
         for (vector<Point>::const_iterator i = begin; i != end; ++i)
-            if (i->is_active && finite(i->x) && finite(i->y))
+            if (i->is_active && is_finite(i->x) && is_finite(i->y))
                 fprintf(gnuplot_pipe_, "%f  %f\n", double(i->x), double(i->y));
-    }
-    else
+    } else
         // if there are no points, we send empty dataset to reset the plot
         fprintf(gnuplot_pipe_, "0.0  0.0\n");
     fprintf(gnuplot_pipe_, "e\n");//gnuplot needs 'e' at the end of data
@@ -132,13 +127,12 @@ void GnuPlot::plot()
     // model
     if (has_points) {
         for (vector<Point>::const_iterator i = begin; i != end; ++i)
-            if (i->is_active && finite(i->x)) {
+            if (i->is_active && is_finite(i->x)) {
                 double y = ftk->get_model_value(i->x, dm_number);
-                if (finite(y))
+                if (is_finite(y))
                     fprintf(gnuplot_pipe_, "%f  %f\n", double(i->x), y);
             }
-    }
-    else
+    } else
         fprintf(gnuplot_pipe_, "0.0  0.0\n");
     fprintf(gnuplot_pipe_, "e\n");
 

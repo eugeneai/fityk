@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 // Command-line user interface.
@@ -10,7 +10,7 @@
 #include <stdlib.h>
 //#include <ctype.h>
 #include <string.h>
-#include <math.h>
+#include <cmath>
 #include <assert.h>
 #ifdef _WIN32
 # include <direct.h> // _getcwd()
@@ -28,7 +28,9 @@
 #include "fityk/fityk.h"
 #include "fityk/ui_api.h"
 #include "gnuplot.h"
-#include <config.h> // VERSION, HAVE_LIBREADLINE, etc
+#if HAVE_CONFIG_H
+#  include <config.h> // VERSION, HAVE_LIBREADLINE, etc
+#endif
 
 #if HAVE_LIBREADLINE
 # if defined(HAVE_READLINE_READLINE_H)
@@ -52,9 +54,14 @@ Fityk* ftk = 0;
 
 //------ implementation of CLI specific methods for UiApi callbacks ------
 
-void cli_draw_plot (UiApi::RepaintMode /*mode*/)
+static
+void cli_draw_plot (UiApi::RepaintMode /*mode*/, const char* filename)
 {
     static GnuPlot my_gnuplot;
+    if (filename) {
+        fprintf(stderr, "Saving plot to file is not implemented.\n");
+        return;
+    }
     my_gnuplot.plot();
 }
 
@@ -123,8 +130,7 @@ char *completion_generator(const char *text, int state)
         entries = complete_fityk_line(ftk, rl_line_buffer, f_start, f_end,
                                       text);
         list_index = 0;
-    }
-    else
+    } else
         list_index++;
     rl_attempted_completion_over = 1;
 
@@ -203,8 +209,6 @@ void main_loop()
     // the main loop -- reading input and executing commands
     for (;;)
         read_and_execute_input();
-
-    printf("\n");
 }
 
 
@@ -225,39 +229,26 @@ void main_loop()
             s.resize(s.size()-1);
             printf("... ");
             fflush(stdout);
-            string cont;
             if (!fgets(line_buffer, sizeof(line_buffer), stdin))
                 break;
             s += line_buffer;
         }
         ftk->get_ui_api()->exec_and_log(s);
     }
-    printf("\n");
 }
 
 #endif //HAVE_LIBREADLINE
 
-
-
-void interrupt_handler (int /*signum*/)
-{
-    //set flag for breaking long computations
-    user_interrupt = true;
-}
-
 } // anonymous namespace
 
 
-int main (int argc, char **argv)
+int main(int argc, char **argv)
 {
-#ifndef _WIN32
-    // setting Ctrl-C handler
-    if (signal (SIGINT, interrupt_handler) == SIG_IGN)
-        signal (SIGINT, SIG_IGN);
-#endif //_WIN32
+    interrupt_computations_on_sigint();
 
     // process command-line arguments
     bool exec_init_file = true;
+    bool enable_plot = true;
     bool quit = false;
     string script_string;
     for (int i = 1; i < argc; ++i) {
@@ -268,42 +259,38 @@ int main (int argc, char **argv)
               "  -V, --version         output version information and exit\n"
               "  -c, --cmd=<str>       script passed in as string\n"
               "  -I, --no-init         don't process $HOME/.fityk/init file\n"
+              "  -n, --no-plot         disable plotting (gnuplot)\n"
               "  -q, --quit            don't enter interactive shell\n");
             return 0;
-        }
-        else if (!strcmp(argv[i], "-V") || !strcmp(argv[i], "--version")) {
+        } else if (!strcmp(argv[i], "-V") || !strcmp(argv[i], "--version")) {
             printf("fityk version " VERSION "\n");
             return 0;
-        }
-        else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--cmd")) {
+        } else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--cmd")) {
             argv[i] = 0;
             ++i;
             if (i < argc) {
                 script_string = argv[i];
                 argv[i] = 0;
-            }
-            else {
+            } else {
                 fprintf(stderr, "Option %s requires parameter\n", argv[i]);
                 return 1;
             }
-        }
-        else if (!strncmp(argv[i], "-c", 2)) {
+        } else if (!strncmp(argv[i], "-c", 2)) {
             script_string = string(argv[i] + 2);
             argv[i] = 0;
-        }
-        else if (!strncmp(argv[i], "--cmd=", 6)) {
+        } else if (!strncmp(argv[i], "--cmd=", 6)) {
             script_string = string(argv[i] + 6);
             argv[i] = 0;
-        }
-        else if (!strcmp(argv[i], "-I") || !strcmp(argv[i], "--no-init")) {
+        } else if (!strcmp(argv[i], "-I") || !strcmp(argv[i], "--no-init")) {
             argv[i] = 0;
             exec_init_file = false;
-        }
-        else if (!strcmp(argv[i], "-q") || !strcmp(argv[i], "--quit")) {
+        } else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--no-plot")) {
+            argv[i] = 0;
+            enable_plot = false;
+        } else if (!strcmp(argv[i], "-q") || !strcmp(argv[i], "--quit")) {
             argv[i] = 0;
             quit = true;
-        }
-        else if (strlen(argv[i]) > 1 && argv[i][0] == '-') {
+        } else if (strlen(argv[i]) > 1 && argv[i][0] == '-') {
             fprintf(stderr, "Unknown option %s\n", argv[i]);
             return 1;
         }
@@ -311,14 +298,15 @@ int main (int argc, char **argv)
 
     ftk = new Fityk;
     // set callbacks
-    ftk->get_ui_api()->connect_draw_plot(cli_draw_plot);
+    if (enable_plot)
+        ftk->get_ui_api()->connect_draw_plot(cli_draw_plot);
 
     if (exec_init_file) {
         // file with initial commands is executed first (if exists)
         string init_file = get_config_dir() + startup_commands_filename();
         if (access(init_file.c_str(), R_OK) == 0) {
             fprintf(stderr, " -- init file: %s --\n", init_file.c_str());
-            ftk->get_ui_api()->exec_script(init_file);
+            ftk->get_ui_api()->exec_fityk_script(init_file);
             fprintf(stderr, " -- end of init file --\n");
         }
     }
@@ -330,7 +318,7 @@ int main (int argc, char **argv)
         //the rest of parameters/arguments are scripts and/or data files
         for (int i = 1; i < argc; ++i) {
             if (argv[i])
-                ftk->get_ui_api()->process_cmd_line_arg(argv[i]);
+                ftk->process_cmd_line_arg(argv[i]);
         }
 
         // there are two versions of main_loop(), w/ and w/o libreadline

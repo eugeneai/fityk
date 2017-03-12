@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_STATBAR_H_
@@ -15,6 +15,7 @@
 class HintReceiver
 {
 public:
+    virtual ~HintReceiver() {}
     virtual void set_hints(std::string const& left, std::string const& right,
                            std::string const& mode_name,
                            std::string const& shift_left,

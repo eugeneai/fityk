@@ -3,6 +3,22 @@
 
 // tests for bindings are in the samples/ directory
 
+%{
+// suppress a number of clang warnings from SWIG-generated code
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wused-but-marked-unused"
+#pragma clang diagnostic ignored "-Wmissing-variable-declarations"
+#pragma clang diagnostic ignored "-Wunreachable-code"
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wshadow"
+#pragma clang diagnostic ignored "-Wc++98-compat-pedantic"
+#pragma clang diagnostic ignored "-Wconditional-uninitialized"
+#endif
+#ifdef __GNUC__
+#pragma GCC diagnostic ignored "-Wshadow"
+#endif
+%}
+
 #if defined(SWIGPERL)
 // Perl has convention of capitalized module names
 %module Fityk
@@ -63,8 +79,10 @@ namespace std {
 
 #if defined(SWIGPYTHON) || defined(SWIGLUA)
     %extend fityk::Point { std::string __str__() { return $self->str(); } }
-    %extend fityk::Func { std::string __str__() { return "%"+$self->name; } }
-    %extend fityk::Var { std::string __str__() { return "$"+$self->name; } }
+    %extend fityk::Func { std::string __str__()
+                                  { return "<Func %"+$self->name + ">"; } }
+    %extend fityk::Var { std::string __str__()
+                                  { return "<Var $" + $self->name + ">"; } }
 #endif
 
 #if defined(SWIGPYTHON)
@@ -159,7 +177,8 @@ namespace std {
     }
 
     PyObject *_py_draw_plot_func = NULL;
-    static void PythonDrawPlotCallBack(fityk::UiApi::RepaintMode mode)
+    static void PythonDrawPlotCallBack(fityk::UiApi::RepaintMode mode,
+                                       const char* /*filename*/)
     {
         PyObject *arglist = Py_BuildValue("(i)", mode);
         PyEval_CallObject(_py_draw_plot_func, arglist);

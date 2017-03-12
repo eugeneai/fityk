@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 
-# Sphinx v1.0.7
-#
-# sphinx-build -d ./doctrees/ -b html . html
+needs_sphinx = '1.5'
 
 import sys, os
 sys.path.append(os.path.abspath('.'))
 
-extensions = ["sphinx.ext.pngmath", "sphinx.ext.extlinks", "fityk_ext"]
+extensions = ["sphinx.ext.imgmath", "sphinx.ext.extlinks", "fityk_ext"]
 
 exclude_patterns = ['html', 'latex']
 if not os.getenv('BUILD_WEBSITE'):
@@ -16,39 +14,46 @@ if not os.getenv('BUILD_WEBSITE'):
 if os.getenv('READTHEDOCS'):
     # RTD works better with index.html
     html_additional_pages = { 'index': '_build/html/fityk-manual.html' }
-    # RTD has own layout.html. This hack is needed to use all layout.html files.
-    template_bridge = "fityk_ext.MyTemplateLoader"
 
-templates_path = ['.']
+html_theme_path = ['.']
 source_suffix = '.rst'
 source_encoding = 'utf-8'
 master_doc = 'fityk-manual'
 project = 'Fityk'
-copyright = '2001-2012, Fityk Developers'
-version = '1.2.1'
+version = '1.3.1'
 release = version
 default_role = None
+suppress_warnings = ["ref.option"]
 
 #highlight_language = "none"
 highlight_language = "fityk"
 pygments_style = "trac"
 
-html_theme = "sphinxdoc"
-html_sidebars = {'index': [],
-                 'screens': [],
-                 '**': ['globaltoc.html', 'sourcelink.html', 'searchbox.html']}
+#html_theme = "sphinxdoc"
+html_theme = 'fitheme'
+
+html_theme_options = {
+    'github_blob': 'wojdyr/fityk/blob/master/doc',
+    'logo': 'fityk-logo.png',
+    'logo_caption': 'curve fitting,&nbsp; data analysis',
+    'website': 'http://fityk.nieto.pl/',
+    'wiki': 'https://github.com/wojdyr/fityk/wiki',
+}
+if os.getenv('BUILD_WEBSITE'):
+    html_theme_options['analytics_id'] = 'UA-20519098-2'
+html_sidebars = { 'index': [], 'screens': [], '**': ['side.html'] }
 html_title = 'Fityk %s manual' % version
 html_short_title = 'Manual'
 html_favicon = 'fityk.ico'
-html_static_path = ['fityk-banner.png', 'fityk.css', 'img/mouse16.png']
-html_style = 'fityk.css'
+html_static_path = ['fityk-logo.png', 'img/mouse16.png']
 html_last_updated_fmt = '%Y-%m-%d'
 html_use_smartypants = True
 html_use_modindex = False
 html_use_index = False
-html_add_permalinks = False
+#html_add_permalinks = False
 #html_compact_lists = True
 html_show_copyright = False
+html_copy_source = False  # we link directly to GitHub
 
 latex_documents = [
   ('fityk-manual', 'fityk-manual.tex', 'Fityk manual', '', 'manual', True),
@@ -65,6 +70,7 @@ latex_elements = {
 
     # put notes into boxes
     'preamble': r"""
+\usepackage{fancybox}
 \usepackage{ifthen}
 \definecolor{gray03}{gray}{0.3}
 \let\origbeginnotice\notice
@@ -73,6 +79,7 @@ latex_elements = {
 \renewenvironment{notice}[2]{%
   \def\noticetype{#1}
   \def\inTheGui{\equal{#2}{In the GUI}}
+  \def\inCLI{\equal{#2}{CLI}}
   \ifthenelse{\equal{#1}{note}}{%
     \setlength{\fboxrule}{1pt}
     \setlength{\fboxsep}{6pt}
@@ -83,7 +90,7 @@ latex_elements = {
     \Sbox
     \minipage{\mylen}
     \ifthenelse{\inTheGui}{\color{gray03}}{}
-    \par\strong{#2}
+    \ifthenelse{\inCLI}{}{\par\sphinxstylestrong{#2}}
   }{%
   \origbeginnotice{#1}{#2}%
   }
@@ -96,19 +103,21 @@ latex_elements = {
   \origendnotice%
   }
 }
-"""
+""",
+  'printindex' : ''
 }
 
 #latex_show_pagerefs = True
-latex_show_urls = True
+latex_show_urls = 'footnote'
+latex_keep_old_macro_names = False
 
 # determine vertical alignment of the math PNGs
-pngmath_use_preview = True
+imgmath_use_preview = True
 
 dl_dir = 'http://fityk.nieto.pl/subscribers/'
 dl_prefix = 'fityk-%s' % version
 extlinks = {
     'wiki': ('https://github.com/wojdyr/fityk/wiki/%s', ''),
-    'download': (dl_dir + dl_prefix + '%s', dl_prefix),
+    'subscribers_download': (dl_dir + dl_prefix + '%s', dl_prefix),
     }
 

@@ -1,10 +1,10 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 ///  Various headers and definitions. Included by almost all files.
 
-#ifndef FITYK__COMMON__H__
-#define FITYK__COMMON__H__
+#ifndef FITYK_COMMON_H_
+#define FITYK_COMMON_H_
 
 #if HAVE_CONFIG_H
 #  include <config.h>
@@ -16,8 +16,7 @@
 
 #include <string>
 #include <vector>
-#include <math.h>
-#include <assert.h>
+#include <cmath>
 
 #include "fityk.h" //ExecuteError
 
@@ -226,12 +225,16 @@ inline bool is_le(double a, double b) { return a <= b + epsilon; }
 inline bool is_ge(double a, double b) { return a >= b - epsilon; }
 inline bool is_zero(double a) { return fabs(a) <= epsilon; }
 
-inline bool is_finite(double a)
-#if HAVE_FINITE
-    { return finite(a); }
+inline bool is_finite(double a) {
+// to avoid "deprecated finite()" warning on OSX 10.9 we try first isfinite()
+#if defined(HAVE_ISFINITE)
+    return isfinite(a);
+#elif defined(HAVE_FINITE)
+    return finite(a);
 #else
-    { return a == a; }
+    return a == a; // this checks only for NaN (better than nothing)
 #endif
+}
 
 
 #ifndef M_PI

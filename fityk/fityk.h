@@ -1,4 +1,4 @@
-/* This file is part of fityk program. Copyright (C) Marcin Wojdyr
+/* This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
  * Licence: GNU General Public License ver. 2+
  */
 
@@ -34,16 +34,21 @@
 #ifdef __cplusplus
 
 #include <cstdio>
-#include <cfloat> // DBL_MAX
+#include <cmath>
 #include <string>
 #include <vector>
 #include <stdexcept>
 
 namespace fityk {
 
+// C++ exception specifications are used by SWIG bindings.
+// They are deprecated (in this form) in C++-11.
 #ifdef _MSC_VER
-// C++ exception specifications are used by SWIG bindings
 #pragma warning( disable : 4290 ) // C++ exception specification ignored...
+#endif
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated"
 #endif
 
 /// Public C++ API of libfityk: class Fityk and helpers.
@@ -51,7 +56,7 @@ namespace fityk {
 /// Minimal examples of using libfityk in C++, Python, Lua and Perl are in
 /// samples/hello.* files.
 
-class Ftk;
+class Full;
 class UiApi;
 struct FitykInternalData;
 
@@ -75,12 +80,13 @@ struct FITYK_API ExitRequestedException : std::exception
 /// used for variable domain and for plot borders
 struct FITYK_API RealRange
 {
-    double from, to;
+    double lo, hi;
 
-    RealRange() : from(-DBL_MAX), to(DBL_MAX) {}
-    RealRange(double from_, double to_) : from(from_), to(to_) {}
-    bool from_inf() const { return from == -DBL_MAX; }
-    bool to_inf() const { return to == DBL_MAX; }
+    RealRange() : lo(-HUGE_VAL), hi(HUGE_VAL) {}
+    RealRange(double low, double high) : lo(low), hi(high) {}
+    bool lo_inf() const { return lo == -HUGE_VAL; }
+    bool hi_inf() const { return hi == HUGE_VAL; }
+    std::string str() const;
 };
 
 /// represents $variable
@@ -91,13 +97,14 @@ public:
     const std::string name;
     RealRange domain;
 
-    realt get_value() const { return value_; };
-    int get_nr() const { return nr_; };
-    bool is_simple() const { return nr_ != -1; }
+    realt value() const { return value_; }
+    int gpos() const { return gpos_; }
+    bool is_simple() const { return gpos_ != -1; }
 
 protected:
-    Var(const std::string &name_, int nr) : name(name_), nr_(nr) {}
-    int nr_; /// see description of this class in var.h
+    Var(const std::string &name_, int gpos) : name(name_), gpos_(gpos) {}
+    ~Var() {}
+    int gpos_; /// see description of this class in var.h
     realt value_;
 };
 
@@ -111,7 +118,10 @@ public:
 
     virtual const std::string& get_template_name() const = 0;
     virtual std::string get_param(int n) const = 0;
-    virtual realt get_param_value(const std::string& param) const = 0;
+    virtual const std::string& var_name(const std::string& param) const
+                                                    throw(ExecuteError) = 0;
+    virtual realt get_param_value(const std::string& param) const
+                                                    throw(ExecuteError) = 0;
     virtual realt value_at(realt x) const = 0;
 protected:
     Func(const std::string name_) : name(name_) {}
@@ -137,6 +147,21 @@ struct FITYK_API Point
     bool operator< (Point const& q) const { return x < q.x; }
 };
 
+/// the only use of this struct is as an argument to Fityk::load()
+struct FITYK_API LoadSpec
+{
+    enum { NN = -10000 }; // not given, default value
+    std::string path;  // utf8 (ascii is valid utf8)
+    std::vector<int> blocks;
+    int x_col;
+    int y_col;
+    int sig_col;
+    std::string format;
+    std::string options;
+    LoadSpec() : x_col(NN), y_col(NN), sig_col(NN) {}
+    explicit LoadSpec(std::string const& p)
+        : path(p), x_col(NN), y_col(NN), sig_col(NN) {}
+};
 
 
 /// the public API to libfityk
@@ -145,7 +170,7 @@ class FITYK_API Fityk
 public:
 
     Fityk();
-    Fityk(Ftk* F);
+    Fityk(Full* F);
     ~Fityk();
 
     /// @name execute fityk commands or change data
@@ -155,7 +180,14 @@ public:
     void execute(std::string const& s) throw(SyntaxError, ExecuteError,
                                              ExitRequestedException);
 
-    /// load data
+
+    /// load data from file (path should be ascii or utf8, col=0 is index)
+    void load(LoadSpec const& spec, int dataset=DEFAULT_DATASET)
+                  throw(ExecuteError);
+    void load(std::string const& path, int dataset=DEFAULT_DATASET)
+      throw(ExecuteError) { load(LoadSpec(path), dataset); }
+
+    /// load data from arrays
     void load_data(int dataset,
                    std::vector<realt> const& x,
                    std::vector<realt> const& y,
@@ -184,6 +216,18 @@ public:
     /// Clear last error message. See also: last_error().
     void clear_last_error() { last_error_.clear(); }
 
+    // @}
+
+    /// @name settings
+    // @{
+    void set_option_as_string(const std::string& opt, const std::string& val)
+                                                         throw(ExecuteError);
+    void set_option_as_number(const std::string& opt, double val)
+                                                         throw(ExecuteError);
+    std::string get_option_as_string(const std::string& opt) const
+                                                         throw(ExecuteError);
+    double get_option_as_number(const std::string& opt) const
+                                                         throw(ExecuteError);
     // @}
 
     /// @name input/output
@@ -216,10 +260,16 @@ public:
     realt calculate_expr(std::string const& s, int dataset=DEFAULT_DATASET)
                                             throw(SyntaxError, ExecuteError);
 
+    //(planned)
+    /// returns dataset titles
+    //std::vector<std::string> all_datasets() const;
+    //or returns a new class, public API to Data (like Func and Var)
+    //std::vector<Dataset*> all_datasets() const;
+
     /// returns number of datasets n, always n >= 1
     int get_dataset_count() const;
 
-    /// returns dataset set by "use @n" command
+    /// returns dataset set by the "use" command
     int get_default_dataset() const;
 
     /// get data points
@@ -229,20 +279,23 @@ public:
     /// returns number of simple-variables (parameters that can be fitted)
     int get_parameter_count() const;
 
-    /// returns vector of simple-variables (parameters that can be fitted)
+    /// returns global array of parameters (values of simple-variables)
     const std::vector<realt>& all_parameters() const;
 
     /// returns all $variables
     std::vector<Var*> all_variables() const;
 
+    /// returns variable $name
+    const Var* get_variable(std::string const& name)  throw(ExecuteError);
+
     /// returns all %functions
     std::vector<Func*> all_functions() const;
 
-    /// returns %functions used in dataset
-    std::vector<Func*> get_components(int dataset, char fz='F');
+    /// returns function with given name ("%" in the name is optional)
+    const Func* get_function(const std::string& name) const;
 
-    /// returns a variable used as a parameter of function
-    Var* get_var(const Func *func, const std::string& parameter)
+    /// returns %functions used in dataset
+    std::vector<Func*> get_components(int dataset=DEFAULT_DATASET, char fz='F')
                                                          throw(ExecuteError);
 
     /// returns the value of the model for a given dataset at x
@@ -254,13 +307,8 @@ public:
     get_model_vector(std::vector<realt> const& x, int dataset=DEFAULT_DATASET)
                                                          throw(ExecuteError);
 
-    /// \brief returns the index of parameter hold by the variable
-    /// (the same index as in get_covariance_matrix(),
-    /// -1 for a compound-variable)
-    int get_variable_nr(std::string const& name)  throw(ExecuteError);
-
     /// get coordinates of rectangle set by the plot command
-    /// side is one of L(eft), R(right), T(op), B(ottom)
+    /// side is one of L(eft), R(ight), T(op), B(ottom)
     double get_view_boundary(char side);
 
     // @}
@@ -280,9 +328,7 @@ public:
     /// get number of degrees-of-freedom for given dataset or for all datasets
     int get_dof(int dataset=ALL_DATASETS)  throw(ExecuteError);
 
-    /// \brief get covariance matrix (for given dataset or for all datasets)
-    /// get_variable_nr() can be used to connect variables with parameter
-    /// positions
+    /// get covariance matrix (for given dataset or for all datasets)
     std::vector<std::vector<realt> >
     get_covariance_matrix(int dataset=ALL_DATASETS)  throw(ExecuteError);
     // @}
@@ -290,44 +336,62 @@ public:
     /// UiApi contains functions used by CLI and may be used to implement
     /// another user interface.
     UiApi* get_ui_api();
+    void process_cmd_line_arg(const std::string& arg);
 
     // implementation details (for internal use)
-    Ftk *get_ftk() { return ftk_; } // access to underlying data
+    Full* priv() { return priv_; } // access to private API
     realt* get_covariance_matrix_as_array(int dataset);
 
 private:
-    Ftk *ftk_;
+    Full *priv_;
     bool throws_;
     std::string last_error_;
-    FitykInternalData *p_;
+    FitykInternalData *p_; // members hidden for the sake of API stability
+    // disallow copy and assign
+    Fityk(const Fityk&);
+    void operator=(const Fityk&);
 };
 
 } // namespace fityk
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #else /* !__cplusplus */
 /* C API.
  * Functions below correspond to member functions of class Fityk.
  * To check for errors use fityk_last_error().
- * bool and Point here should be ABI-compatible with C++ bool and fityk::Point.
+ * Point here should be ABI-compatible with C++ bool and fityk::Point.
  */
-
-#define bool _Bool
 
 typedef struct Fityk_ Fityk;
 
 typedef struct
 {
     realt x, y, sigma;
-    bool is_active;
+#if __STDC_VERSION__-0 >= 199901L
+    _Bool is_active;
+#else
+    unsigned char is_active; // best guess
+#endif
 } Point;
 
+#endif /* __cplusplus */
+
+#if !defined(__cplusplus) || defined(FITYK_DECLARE_C_API)
+#ifdef __cplusplus
+extern "C" {
+using fityk::Point;
+using fityk::Fityk;
+#endif
 
 FITYK_API Fityk* fityk_create();
 FITYK_API void fityk_delete(Fityk *f);
-/* returns false on ExitRequestedException */
-FITYK_API bool fityk_execute(Fityk *f, const char* command);
+/* returns 0 on ExitRequestedException */
+FITYK_API int fityk_execute(Fityk *f, const char* command);
 FITYK_API void fityk_load_data(Fityk *f, int dataset,
-                               realt *x, realt *y, realt *sigma, int num,
+                               double *x, double *y, double *sigma, int num,
                                const char* title);
 /* returns NULL if no error happened since fityk_clear_last_error() */
 FITYK_API const char* fityk_last_error(const Fityk *f);
@@ -340,7 +404,6 @@ FITYK_API int fityk_get_parameter_count(const Fityk* f);
 /* get data point, returns NULL if index is out of range */
 FITYK_API const Point* fityk_get_data_point(Fityk *f, int dataset, int index);
 FITYK_API realt fityk_get_model_value(Fityk *f, realt x, int dataset);
-FITYK_API int fityk_get_variable_nr(Fityk *f, const char* name);
 FITYK_API realt fityk_get_wssr(Fityk *f, int dataset);
 FITYK_API realt fityk_get_ssr(Fityk *f, int dataset);
 FITYK_API realt fityk_get_rsquared(Fityk *f, int dataset);
@@ -349,7 +412,11 @@ FITYK_API int fityk_get_dof(Fityk *f, int dataset);
 /* length of the array is parameter_count^2                        */
 FITYK_API realt* fityk_get_covariance_matrix(Fityk *f, int dataset);
 
-#endif /* __cplusplus */
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif
 
 #endif /* FITYK_FITYK_H_ */
 

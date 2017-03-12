@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 ///  FPlot, the base class for MainPlot and AuxPlot
 
@@ -30,7 +30,7 @@ void Scale::set(double m, double M, int pixels)
     scale = pixels / (reversed ? -h : h);
     // small (subpixel) shift that aligns axis with pixel grid
     if (!logarithm)
-        origin = iround(origin * scale) / scale;
+        origin = round(origin * scale) / scale;
 }
 
 double Scale::valr(int px) const
@@ -40,8 +40,7 @@ double Scale::valr(int px) const
         double delta = fabs(val - exp((px-1) / scale + origin));
         double t = pow(10, floor(log10(delta)));
         return floor(val / t + 0.5) * t;
-    }
-    else {
+    } else {
         double val = px / scale + origin;
         double delta = fabs(0.5 / scale);
         double t = pow(10, floor(log10(delta)));
@@ -79,6 +78,22 @@ void Overlay::draw_overlay()
                 dc.DrawRectangle(min(x1_, x2_), min(y1_, y2_), width, height);
             }
             break;
+        case kLinearDraft: {
+            int width = dc.GetSize().GetWidth();
+            int height = dc.GetSize().GetHeight();
+            int dy = y2_ - y1_;
+            int dx = x2_ - x1_;
+            if (abs(dy) < abs(dx)) {
+                double m = (double) dy / dx;
+                dc.DrawLine(0, y1_ - m * x1_,
+                            width, y1_ + m * (width - x1_));
+            } else {
+                double im = (double) dx / dy;
+                dc.DrawLine(x1_ - y1_ * im, 0,
+                            x1_ + (height - y1_) * im, height);
+            }
+            break;
+        }
         case kPeakDraft: {
             int ctr = x1_;
             int hwhm = abs(x1_ - x2_);
@@ -89,21 +104,13 @@ void Overlay::draw_overlay()
             dc.DrawLine(ctr, y2_, ctr + 2 * hwhm, y1_); // right slope
             break;
         }
-        case kLinearDraft: {
-            int width = dc.GetSize().GetWidth();
-            int height = dc.GetSize().GetHeight();
+        case kSigmoidDraft: {
             int dy = y2_ - y1_;
-            int dx = x2_ - x1_;
-            if (abs(dy) < abs(dx)) {
-                double m = (double) dy / dx;
-                dc.DrawLine(0, y1_ - m * x1_,
-                            width, y1_ + m * (width - x1_));
-            }
-            else {
-                double im = (double) dx / dy;
-                dc.DrawLine(x1_ - y1_ * im, 0,
-                            x1_ + (height - y1_) * im, height);
-            }
+            int dx = abs(x2_ - x1_);
+            int dc_width = dc.GetSize().GetWidth();
+            dc.DrawLine(0,        y1_ - dy, x1_ - dx, y1_ - dy);
+            dc.DrawLine(x1_ - dx, y1_ - dy, x1_ + dx, y1_ + dy);
+            dc.DrawLine(x1_ + dx, y1_ + dy, dc_width, y1_ + dy);
             break;
         }
         case kCrossHair:
@@ -168,11 +175,11 @@ void FPlot::set_font(wxDC &dc, wxFont const& font)
         wxFont f = font;
         f.SetPointSize(f.GetPointSize() * pen_width);
         dc.SetFont(f);
-    }
-    else
+    } else
         dc.SetFont(font);
 }
 
+static
 void draw_line_with_style(wxDC& dc, wxPenStyle style,
                           wxCoord X1, wxCoord Y1, wxCoord X2, wxCoord Y2)
 {
@@ -327,8 +334,7 @@ void stroke_lines(wxDC& dc, wxGraphicsContext *gc, int n, wxPoint2DDouble *pp)
         return;
     if (gc) {
         gc->StrokeLines(n, pp);
-    }
-    else {
+    } else {
         wxPoint *points = new wxPoint[n];
         for (int i = 0; i < n; ++i) {
             points[i].x = iround(pp[i].m_x);
@@ -389,13 +395,11 @@ void FPlot::draw_data_by_activity(wxDC& dc, wxPoint2DDouble *pp,
             for (int i = 0; i != len; ++i)
                 if (aa[i] == state)
                     gc->DrawEllipse(pp[i].m_x - r/2., pp[i].m_y - r/2., r, r);
-        }
-        else
+        } else
             for (int i = 0; i != len; ++i)
                 if (aa[i] == state)
                     dc.DrawEllipse(pp[i].m_x - r/2, pp[i].m_y - r/2, r, r);
-    }
-    else if (!line_between_points) { // if we are here, point_radius == 1
+    } else if (!line_between_points) { // if we are here, point_radius == 1
         if (gc) {
             wxGraphicsPath path = gc->CreatePath();
             for (int i = 0; i != len; ++i)
@@ -408,8 +412,7 @@ void FPlot::draw_data_by_activity(wxDC& dc, wxPoint2DDouble *pp,
             gc->SetAntialiasMode(wxANTIALIAS_NONE);
             gc->StrokePath(path);
             gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
-        }
-        else
+        } else
             for (int i = 0; i != len; ++i)
                 if (aa[i] == state)
                     dc.DrawPoint(iround(pp[i].m_x), iround(pp[i].m_y));
@@ -454,7 +457,7 @@ void FPlot::draw_data (wxDC& dc,
     // draw inactive
     wxColour icol = inactive_color.Ok() ? inactive_color : inactiveDataCol;
     dc.SetPen(wxPen(icol, pen_width));
-    dc.SetBrush(wxBrush(icol, wxSOLID));
+    dc.SetBrush(wxBrush(icol, wxBRUSHSTYLE_SOLID));
     draw_data_by_activity(dc, pp, aa, false);
     if (draw_sigma)
         for (int i = 0; i != len; ++i)
@@ -467,7 +470,7 @@ void FPlot::draw_data (wxDC& dc,
     // draw active
     wxColour acol = color.Ok() ? color : activeDataCol;
     dc.SetPen(wxPen(acol, pen_width));
-    dc.SetBrush(wxBrush(acol, wxSOLID));
+    dc.SetBrush(wxBrush(acol, wxBRUSHSTYLE_SOLID));
     draw_data_by_activity(dc, pp, aa, true);
     if (draw_sigma)
         for (int i = 0; i != len; ++i)
@@ -484,9 +487,9 @@ void FPlot::set_scale(int pixel_width, int pixel_height)
 {
     Rect const &v = ftk->view;
     if (pixel_width > 0)
-	xs.set(v.left(), v.right(), pixel_width);
+        xs.set(v.left(), v.right(), pixel_width);
     if (pixel_height > 0)
-	ys.set(v.top(), v.bottom(), pixel_height);
+        ys.set(v.top(), v.bottom(), pixel_height);
 }
 
 int FPlot::get_special_point_at_pointer(wxMouseEvent& event)

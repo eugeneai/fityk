@@ -1,6 +1,6 @@
 
 // fastest_humlik.for and humdev.for - from Bob Wells Voigt Function Page
-// http://www.atm.ox.ac.uk/user/wells/voigt.html
+// http://web.archive.org/web/20100503005358/http://www.atm.ox.ac.uk/user/wells/voigt.html
 // Translated to C++ with f2c program and modified by M.W.
 // It can be slower than original, I haven't compared the speed.
 
@@ -10,7 +10,6 @@
 
 ///     Calculates the Faddeeva function
 ///     and partial derivatives of the Voigt function for y>=0
-///     (from http://www.atm.ox.ac.uk/user/wells/voigt.html)
 /// arguments:
 ///  x, y - Faddeeva/Voigt function arguments
 ///  k - voigt              -- output
@@ -83,8 +82,7 @@ void humdev(const float x, const float y,
         d1 *= d;
         dkdx = d1 * x * y * (c0 - (c2 + xq) * (xq + xq));
         dkdy = d1 * (r0 - xq * (r2 - xq * (b1 + xq)));
-    }
-    else {
+    } else {
 
         if (abx > xlimc) {  // Region C
             if (rgc) {
@@ -211,8 +209,7 @@ void humdev(const float x, const float y,
                     dkdy += c[j] * (mf[j] + pf[j] - yf2 * (mfq + pfq))
                                + s[j] * yf1 * (mt[j] * mfq - pt[j] * pfq);
                 }
-            }
-            else {               //  Humlicek CPF12 Region II
+            } else {               //  Humlicek CPF12 Region II
                 float yp2y0 = y + (float)3.;
                 for (int j = 0; j <= 5; ++j) {
                     k += (c[j] * (mq[j] * mf[j] - ym[j] * 1.5f)
@@ -236,7 +233,6 @@ void humdev(const float x, const float y,
 
 
 ///   Calculates the Faddeeva function with relative error less than 10^(-4).
-///     (from http://www.atm.ox.ac.uk/user/wells/voigt.html)
 /// arguments:
 ///  x, y - Faddeeva/Voigt function arguments
 /// return value -- voigt

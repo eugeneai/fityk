@@ -1,27 +1,25 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_FRAME_H_
 #define FITYK_WX_FRAME_H_
 
 #include <list>
-#include <wx/spinctrl.h>
-#include <wx/filename.h>
 #include "cmn.h"  // enums
 #include "plotpane.h"
 #include "fityk/ui.h" // UserInterface::Style
 
 class TextPane;
 class SideBar;
-class ProportionalSplitter;
 class PrintManager;
 class FStatusBar;
+class RecentFiles;
 
-namespace fityk { class Ftk; struct RealRange; class DataAndModel; }
-extern fityk::Ftk *ftk;
+namespace fityk { class Full; struct RealRange; class Data; }
+extern fityk::Full *ftk;
 using fityk::UserInterface;
 using fityk::RealRange;
-using fityk::DataAndModel;
+using fityk::Data;
 
 // execute command(s) from string
 UserInterface::Status exec(const std::string &s);
@@ -97,6 +95,7 @@ public:
     void OnFHistory      (wxCommandEvent& event);
 
     void OnPowderDiffraction (wxCommandEvent&);
+    void OnXpsKEBE(wxCommandEvent&);
 
     void OnMenuLogStartUpdate (wxUpdateUIEvent& event);
     void OnMenuLogStopUpdate (wxUpdateUIEvent& event);
@@ -106,7 +105,7 @@ public:
     void OnLogWithOutput (wxCommandEvent& event);
     void OnSaveHistory   (wxCommandEvent& event);
     void OnInclude      (wxCommandEvent& event);
-    void OnReInclude    (wxCommandEvent& event);
+    void OnRecentScript (wxCommandEvent& event);
     void OnNewFitykScript(wxCommandEvent&);
     void OnNewLuaScript(wxCommandEvent&);
     void OnNewHistoryScript(wxCommandEvent&);
@@ -187,7 +186,7 @@ public:
     void update_config_menu(wxMenu *menu);
     int get_focused_data_index();
     std::vector<int> get_selected_data_indices();
-    std::vector<DataAndModel*> get_selected_dms();
+    std::vector<Data*> get_selected_datas();
     std::string get_datasets();
     std::string get_guess_string(const std::string& name);
     PlotPane *plot_pane() { return plot_pane_; }
@@ -199,7 +198,7 @@ public:
     SideBar* get_sidebar() { return sidebar_; }
     void activate_function(int n);
     void update_app_title();
-    void add_recent_data_file(std::string const& filename);
+    void add_recent_data_file(const wxString& filename);
     void update_menu_functions();
     void update_menu_saved_transforms();
     void update_menu_recent_baselines();
@@ -224,18 +223,16 @@ private:
     int peak_type_nr_;
     std::vector<std::string> peak_types_;
     PrintManager* print_mgr_;
-    std::string last_include_path_;
-    std::list<wxFileName> recent_data_files_;
-    wxMenu *data_menu_recent, *data_ft_menu_, *func_type_menu_;
+    RecentFiles *recent_scripts_, *recent_data_;
+    wxMenu *data_ft_menu_, *func_type_menu_;
     wxString script_dir_, data_dir_, export_dir_;
+    wxString last_session_path_;
     bool antialias_;
 
     void place_plot_and_io_windows(wxWindow *parent);
     void create_io_panel(wxWindow *parent);
     void set_menubar();
     void update_peak_type_list();
-    void read_recent_data_files();
-    void write_recent_data_files();
     void change_mouse_mode(MouseModeEnum mode);
     void export_as_info(const std::string& info, const char* caption,
                         const char* ext, const char* wildcards);

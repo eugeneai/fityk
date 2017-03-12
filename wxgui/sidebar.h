@@ -1,8 +1,8 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__WX_SIDEBAR__H__
-#define FITYK__WX_SIDEBAR__H__
+#ifndef FITYK_WX_SIDEBAR_H_
+#define FITYK_WX_SIDEBAR_H_
 
 #include <wx/notebook.h>
 #include <wx/spinctrl.h>
@@ -12,7 +12,7 @@
 #include <string>
 
 #include "cmn.h" // ProportionalSplitter
-#include "fancyrc.h" // ParameterPanelObserver
+#include "parpan.h" // ParameterPanelObserver
 
 class GradientDlg;
 class FancyRealCtrl;
@@ -63,7 +63,7 @@ public:
     void update_lists(bool nondata_changed=true);
     /// get active dataset number -- if none is focused, return first one (0)
     int get_focused_data() const;
-    int get_active_function() const { return active_function; }
+    int get_active_function() const { return active_function_; }
     int get_focused_var() const;
     std::vector<int> get_ordered_dataset_numbers();
     std::string get_sel_datasets_as_string();
@@ -71,7 +71,7 @@ public:
     //bool is_func_selected(int n) const;
     //int set_selection(int page) { return nb->SetSelection(page); }
     void activate_function(int n);
-    void select_datasets(const std::vector<int>& datasets);
+    //void select_datasets(const std::vector<int>& datasets);
     std::vector<std::string> get_selected_data() const;
     bool howto_plot_dataset(int n, bool& shadowed, int& offset) const;
     std::vector<std::string> get_selected_func() const;
@@ -81,8 +81,9 @@ public:
     void update_var_inf();
     void update_param_panel();
     void delete_selected_items();
-    void change_parameter_value(int idx, double value);
     std::string get_datasets_for_plot();
+    DraggedFuncObserver* dragged_func_callback() { return param_panel_; }
+    const std::vector<realt>& parpan_values() { return param_panel_->values(); }
 
     // implementation of ParameterPanelObserver
     virtual void on_parameter_changing(const std::vector<realt>& values);
@@ -92,22 +93,21 @@ public:
 private:
     wxNotebook *nb;
     wxPanel *data_page, *func_page, *var_page;
-    fityk::Function const* pp_func; ///parameter panel function
-    ParameterPanel *param_panel;
+    fityk::Function const* pp_func_; ///parameter panel function
+    ParameterPanel *param_panel_;
     DataListPlusText *d;
     ListPlusText *f, *v;
-    wxChoice *data_look, *filter_ch;
+    wxChoice *data_look;
     wxSpinCtrl *shiftup_sc, *dpsize_sc;
     wxCheckBox *dpline_cb, *dpsigma_cb;
-    int active_function;
-    std::string active_function_name;
+    int active_function_;
+    std::string active_function_name_;
     bool skipOnFuncFocusChanged_;
 
     void update_func_list(bool nondata_changed);
     void update_var_list();
     void do_activate_function();
     void make_same_func_par(std::string const& p, bool checked);
-    bool find_value_of_param(std::string const& p, double* value);
 
     DECLARE_EVENT_TABLE()
 };

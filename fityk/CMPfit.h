@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 /// wrapper around MPFIT (cmpfit) library,
@@ -16,18 +16,26 @@ namespace fityk {
 class MPfit : public Fit
 {
 public:
-    MPfit(Ftk* F, const char* name) : Fit(F, name) {}
-    virtual void init(); // called before do_iteration()/autoiter()
-    void autoiter();
+    MPfit(Full* F, const char* fname) : Fit(F, fname) {}
+    virtual double run_method(std::vector<realt>* best_a);
 
     // implementation (must be public to be called inside callback function)
     int calculate(int m, int npar, double *par, double *deviates,
                   double **derivs);
     int on_iteration();
+
+    virtual std::vector<double>
+        get_covariance_matrix(const std::vector<Data*>& datas);
+    virtual std::vector<double>
+        get_standard_errors(const std::vector<Data*>& datas);
 private:
     mp_config_struct mp_conf_;
     mp_result result_;
-    int start_iter_;
+
+    int run_mpfit(const std::vector<Data*>& datas,
+                  const std::vector<realt>& parameters,
+                  const std::vector<bool>& param_usage,
+                  double *final_a=NULL);
 };
 
 } // namespace fityk

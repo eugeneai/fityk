@@ -1,20 +1,37 @@
-* optimize calculation of errors (matrix inversion)
 
-* GUI: Re-execute script -> Recent scripts
+* getting NaN as one of X values leads to hard to diagnose problems,
+  need to filter it out at some stage and warn the user
 
-* use optimization algorithms from NLopt library
+* handle correlated parameters: use pseudo-inverse for covariance matrix
+
+* API: add all_datasets(): for n, title in F:all_datasets() do ...
+  (or a public class Dataset?)
+
+* API: access to confidence intervals
+
+* GUI: Tools > Macros
+
+* document how to get Gaussian/Lorentzian width from Voigt
+
+* info cov/errors - do not specify dataset
+
+* samples: add CeO2 from http://mysite.du.edu/~balzar/s-s_rr.htm
+
+* XRPD - db of popular materials? but which are the most popular?
+
+* GUI: plot histogram of residuals:
+  http://www.itl.nist.gov/div898/handbook/eda/section3/normprpl.htm
+
+* Use more exact Voigt approximation from Faddeeva Package (by SGJ) or libcerf
 
 * FFT data transformation using FFTW library,
   fft[-inv]-xx, where xx is re, im, amp, e.g. @n = fft-re(@3)
 
 * convolution and deconvolution of two datasets or a dataset with Gaussian:
   convolve(@0, @1); convolve(@0, 2.3); deconvolve(@0,3.4)
+  OR                conv(@0, gauss(2.3))
 
 * GUI: draw points (handles) for dragging peak width at half height
-
-* GUI: definition mgr - checkbox - show in the list on toolbar
-
-* GUI: definition mgr - show formula images from the manual, if available
 
 * CLI/GUI: use sigaction() instead of signal() to handle SIGINT
   print a message from interrupt_handler()
@@ -46,28 +63,15 @@
 
 * GUI: a simple (for the user) way to interrupt fitting. Requires two threads.
 
-* plot histogram of resiudals:
-  http://www.itl.nist.gov/div898/handbook/eda/section3/normprpl.htm
-
 * confidence bands
 
 * data smoothing (Savitzky-Golay and/or other methods)
 
-* GUI: constraining parameters of two peak using the peak-top menu
-
-* add a new function category: sigmoids/steps (now function can be guessed as
-  "peak" and "linear"). (GUI): drawing drafts for the new category.
-
 * splines: fitting, guessing, handling knots in the GUI
 
-* GUI: add alpha channel to the toolbar icons
-
 * user defined functions:
-      - calculating limits, width, area, etc. for UDF
-      - ?? use LLVM for faster calculation of user-defined functions
-
-* Use a better approximation of Voigt function than the one used now.
-  There are dozens of papers on Voigt calculation, mostly in JQSRT.
+  - calculating limits, width, area, etc. for UDF
+  - ?? use LLVM for faster calculation of user-defined functions
 
 * info dpeak [range]: show parameters of selected data range assuming that
   this range contains a peak: area, center, FWHM, max, peak-area, backgr-area
@@ -79,13 +83,16 @@
                        http://dx.doi.org/10.1002/cem.1005
                        http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2631518/
 
+* "anonymous" function types: %f = ~1/(1+exp(11*(~0.663-x)))  -> Anon1(a0,a1)
+
+* fitting - external libraries to be considered/tested:
+  - ceres-solver (or http://dlib.net/optimization.html)
+  - libgencurvefit (Differential Evolution),
+  - PaGMO library that collects many optimisation methods.
+  - GSL: https://www.sourceware.org/ml/gsl-discuss/2014-q1/msg00025.html
+
 * fitting: in addition to the least squares fit, add so-called robust fit 
   (it is called robust fit in the Numerical Recipes book), i.e. optimize
   assuming the error distribution is other then Gaussian, eg. Lorenzian...;
   there is also a literature about so called 'maximum-likelihood method'
   in which the exact Poisson error distribution is handled.
-
-* fitting: box-constrained parameters (simple-variables)
-           the constraints could be automatic for some function parameters,
-	   e.g. "guess PseudoVoigt" could give shape with bounds <0,1>
-

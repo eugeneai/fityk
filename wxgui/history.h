@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) 2009 Marcin Wojdyr
+// This file is part of fityk program. Copyright 2009 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// SumHistoryDlg: a dialog for Fit > Parameter History
 
@@ -28,7 +28,7 @@ private:
     void OnViewSpinCtrlUpdate(wxSpinEvent& event);
     void compute_all_wssr();
     void clear_history();
-    void OnActivate(wxActivateEvent&) { compute_all_wssr(); };
+    void OnActivate(wxActivateEvent&) { compute_all_wssr(); }
 
     void initialize_lc();
     DECLARE_EVENT_TABLE()

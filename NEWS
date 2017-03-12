@@ -1,3 +1,38 @@
+User-visible changes in version 1.3.1  (2016-12-21):
+* GUI: more options in the peak-top menu
+* GUI: Tools > XPS KE <-> BE
+* added utilities F.findx(), F.extremum(), centile(N, expr), %peak.IB
+* bug fixes, as always
+
+User-visible changes in version 1.3.0  (2015-05-25):
+* support filenames with non-ascii characters
+* simple-variable ~NUM can be followed by domain, e.g.: %f=Linear(~3[2:5], ~8)
+  and also default parameters can have domain (...shape=~0.5 [0:1],...),
+  Voigt and PseudoVoigt have now shape with default domain [0:1]
+* if variable has a domain (example: $a = ~1.2 [-3:4]) then
+   "$a = ~3" keeps domain of $a (also "a={$a}; $a=~{a}" preserves domain)
+   "$a = ~3 [:]" unsets domain
+   "$a = copy($x) - copy $x with domain
+* new boolean box_constraints option decides if domains are used as box
+  constraints in fitting methods that support it (default: on)
+* GUI: added auto-completion to Lua script editor
+* xyConvert is now part of xylib (removed flag --disable-xyconvert)
+* command "reset" does not reset Lua VM (to allow "reset" from Lua scripts)
+* Lua: add Python-style formatting (e.g."%d pigs" % 3) using __mod for strings
+
+User-visible changes in version 1.2.9  (2014-04-13):
+* fitting:
+  - a few optimization methods from the NLopt library have been added
+  - MPFIT and NLopt methods support box constraints
+  - simplifications that made using external libraries easier:
+    - removed stopping criterium based on iterations. The max. number of
+      WSSR evaluations can be used instead.
+    - removed fit continuation (fit +N)
+* new function Sigmoid and new category of functions (S-shaped/step/sigmoidal)
+* GUI: added menu Session > Recent Scripts
+* GUI: added checkbox to Functions > Export Peak Parameters
+* GUI: added "decimal comma" option to Data > Load dialogs.
+
 User-visible changes in version 1.2.1  (2012-11-05):
 * added commands '=' and 'exec=' - shorthands 'lua return' and 'lua F:execute'
 * API: default dataset in a few functions changed from @0 to the currently used

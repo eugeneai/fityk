@@ -68,12 +68,12 @@ guess %lo = SplitGaussian [38:]
 sleep 0.3
 guess %lo = LorentzianA [38:44]
 %pe = Pearson7(height=~1901, center=~75.313, hwhm=~1/2, shape=2.4)
+%g2S = GaussianA(height=~300, center=75, area=~11174, hwhm=~6.3[0:10])
 F += %pe
 %ble = copy(%pe)
 dele %pe
 F += Pearson7(~2000, ~75, ~0.6, ~2)
-@0: fit 2
-fit+ 15
+@0: fit 12
 @*: with fitting_method=nelder_mead_simplex fit 10
 with fitting_method=genetic_algorithms fit 10
 %fun = copy(%_1)
@@ -83,8 +83,12 @@ $a = %ble.shape + %lo.hwhm
 $b = ~{%ble.shape} + {%lo.hwhm}
 $abc = F[0].hwhm + 1
 $abc = {F[0].hwhm + 0.1}
+$_a = 3
+$_a = 4
 @0.F[0].hwhm = $abc
 F[*].hwhm = $abc
+%*.hwhm = $abc
+%*.dummy = ~3
 F[*].hwhm = ~{F[0].hwhm + 0.1}
 %lo_cp = copy(@0.F[1])
 del %lo_cp
@@ -168,6 +172,8 @@ X = x + @0.Z(x)
 del %c
 p %fun(%fun.extremum(10, 50))
 @0: p s[index(19.92)]^2, y[index(19.92)]
+p %fun.numarea(10, 30, 100)
+p F.numarea(-10, 10, 100)
 
 
 plot

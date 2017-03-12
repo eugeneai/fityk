@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_BGM_H_
@@ -36,6 +36,10 @@ public:
     const wxString& get_recent_bg_name(int n) const;
     void read_recent_baselines();
     void write_recent_baselines();
+
+    // handle "ui bg_subtracted_from = index_list"
+    void set_bg_subtracted(const std::string& index_list, bool value);
+    std::string get_bg_subtracted() const;
 
 private:
     const Scale& x_scale_;

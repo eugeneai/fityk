@@ -11,15 +11,15 @@ libfityk_la_CPPFLAGS = $(LUA_INCLUDE)
 
 libfityk_la_SOURCES = logic.cpp view.cpp lexer.cpp eparser.cpp cparser.cpp \
 		 runner.cpp info.cpp common.cpp data.cpp var.cpp mgr.cpp \
-		 tplate.cpp func.cpp udf.cpp bfunc.cpp ast.cpp \
+		 tplate.cpp func.cpp udf.cpp bfunc.cpp f_fcjasym.cpp ast.cpp \
 		 vm.cpp transform.cpp settings.cpp ui.cpp ui_api.cpp \
-		 GAfit.cpp LMfit.cpp guess.cpp NMfit.cpp \
+		 luabridge.cpp GAfit.cpp LMfit.cpp guess.cpp NMfit.cpp \
 		 model.cpp fit.cpp voigt.cpp numfuncs.cpp fityk.cpp \
 		 \
                  logic.h view.h lexer.h eparser.h cparser.h \
 		 runner.h info.h common.h data.h var.h mgr.h \
-		 tplate.h func.h udf.h bfunc.h ast.h \
-		 vm.h transform.h settings.h ui.h \
+		 tplate.h func.h udf.h bfunc.h f_fcjasym.h ast.h \
+		 vm.h transform.h settings.h ui.h luabridge.h \
 		 GAfit.h LMfit.h guess.h NMfit.h \
 		 model.h fit.h voigt.h numfuncs.h \
 		 swig/fityk_lua.cpp swig/luarun.h \
@@ -31,6 +31,43 @@ endif
 
 pkginclude_HEADERS = fityk.h ui_api.h
 
+# Undocumented feature: if Lua 5.2 source is unpacked into ./lua52
+# and LUA52_FROM_SOURCE=yes liblua is built as part of libfityk.
+if COMPILE_LUA_SRC
+nodist_libfityk_la_SOURCES = \
+lua52/src/lapi.c \
+lua52/src/lcode.c \
+lua52/src/lctype.c \
+lua52/src/ldebug.c \
+lua52/src/ldo.c \
+lua52/src/ldump.c \
+lua52/src/lfunc.c \
+lua52/src/lgc.c \
+lua52/src/llex.c \
+lua52/src/lmem.c \
+lua52/src/lobject.c \
+lua52/src/lopcodes.c \
+lua52/src/lparser.c \
+lua52/src/lstate.c \
+lua52/src/lstring.c \
+lua52/src/ltable.c \
+lua52/src/ltm.c \
+lua52/src/lundump.c \
+lua52/src/lvm.c \
+lua52/src/lzio.c \
+lua52/src/lauxlib.c \
+lua52/src/lbaselib.c \
+lua52/src/lbitlib.c \
+lua52/src/lcorolib.c \
+lua52/src/ldblib.c \
+lua52/src/liolib.c \
+lua52/src/lmathlib.c \
+lua52/src/loslib.c \
+lua52/src/lstrlib.c \
+lua52/src/ltablib.c \
+lua52/src/loadlib.c \
+lua52/src/linit.c
+endif
 
 # --- directory swig/ ---
 

@@ -1,10 +1,11 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__GAFIT__H__
-#define FITYK__GAFIT__H__
+#ifndef FITYK_GAFIT_H_
+#define FITYK_GAFIT_H_
 #include <vector>
-#include "common.h"
+#include <map>
+#include "fityk.h" // realt
 #include "fit.h"
 
 namespace fityk {
@@ -13,7 +14,6 @@ struct Individual
 {
     std::vector<realt> g;
     realt raw_score, phase_2_score, reversed_score, norm_score;
-    int generation;
     Individual (int n) : g(n), raw_score(0) {}
     Individual () : g(), raw_score(0) {}
 };
@@ -22,10 +22,9 @@ struct Individual
 class GAfit : public Fit
 {
 public:
-    GAfit(Ftk* F, const char* name);
+    GAfit(Full* F, const char* name);
     ~GAfit();
-    virtual void init(); // called before autoiter()
-    void autoiter();
+    virtual double run_method(std::vector<realt>* best_a);
 private:
     int popsize;
     int elitism; // = 0, 1, ... popsize
@@ -77,7 +76,7 @@ private:
     std::vector<int>::iterator SRS_and_DS_common (std::vector<int>& next);
     bool termination_criteria_and_print_info (int iter);
     void print_post_fit_info (realt wssr_before);
-    void autoplot_in_autoiter();
+    void autoplot_in_run();
     void compute_wssr_for_ind (std::vector<Individual>::iterator ind);
 };
 

@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 /// Data expression parser.
@@ -10,11 +10,9 @@
 #include <string>
 
 #include "vm.h"
+#include "lexer.h" // TokenType, Token, Lexer
 
 namespace fityk {
-
-struct Token;
-class Lexer;
 
 /// base class used to implement aggregate functions (sum, min, avg, etc.)
 class AggregFunc
@@ -25,6 +23,8 @@ public:
     // x - expression value, n - index of the point in Data::p_
     void put(double x, int n) { ++counter_; op(x, n); }
     virtual double value() const { return v_; }
+    virtual int number_of_parameters() const { return 0; }
+    virtual void add_param(double /*p*/) { }
 
 protected:
     int counter_;
@@ -44,19 +44,19 @@ public:
     {
         kOperator,
         kValue,
-        kIndex,
+        kIndex
     };
 
     enum ParseMode
     {
         kNormalMode,
         kAstMode,
-        kDatasetTrMode,
+        kDatasetTrMode
     };
 
     // if F is NULL, $variables, %functions, etc. are not handled
-    ExpressionParser(const Ftk* F) : ExprCalculator(F), expected_(kValue),
-                                     finished_(false) {}
+    ExpressionParser(const Full* F) : ExprCalculator(F), expected_(kValue),
+                                      finished_(false) {}
 
     /// reset state
     void clear_vm() { vm_.clear_data(); }
@@ -70,6 +70,8 @@ public:
     // does not throw; returns true if all string is parsed
     bool parse_full(Lexer& lex, int default_ds,
                     const std::vector<std::string> *custom_vars=NULL);
+
+    RealRange parse_domain(Lexer& lex, int ds);
 
     /// adds OP_ASSIGN_? to the code
     void push_assign_lhs(const Token& t);
@@ -94,7 +96,7 @@ private:
     void put_binary_op(Op op);
     void put_function(Op op);
     void put_ag_function(Lexer& lex, int ds, AggregFunc& ag);
-    void put_value_from_curly(Lexer& lex, int ds);
+    double get_value_from(Lexer& lex, int ds, TokenType trailer);
     void put_array_var(bool has_index, Op op);
     void put_name(Lexer& lex, const std::string& word,
                   const std::vector<std::string>* custom_vars,
@@ -103,6 +105,7 @@ private:
     void put_variable_sth(Lexer& lex, const std::string& name, bool ast_mode);
     void put_func_sth(Lexer& lex, const std::string& name, bool ast_mode);
     void put_fz_sth(Lexer& lex, char fz, int ds, bool ast_mode);
+    void put_tilde_var(Lexer& lex, int ds);
 
     void pop_onto_que();
     void pop_until_bracket();

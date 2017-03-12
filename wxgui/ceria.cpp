@@ -8,13 +8,14 @@
 #endif
 #include <stdio.h>
 #include <ctype.h>
-#include <math.h>
+#include <cmath>
 #include <assert.h>
 #include <string.h>
 #include <algorithm>
 
 using namespace std;
 
+static
 Pos apply_seitz(Pos const& p0, SeitzMatrix const& s)
 {
     Pos p;
@@ -35,6 +36,7 @@ string fullHM(const SpaceGroupSetting *sgs)
         return string(sgs->HM) + ":" + sgs->ext;
 }
 
+static
 bool check_symmetric_hkl(const SgOps &sg_ops, const Miller &p1,
                                               const Miller &p2)
 {
@@ -53,6 +55,7 @@ bool check_symmetric_hkl(const SgOps &sg_ops, const Miller &p1,
     return false;
 }
 
+static
 bool is_position_empty(const vector<Pos>& pp, const Pos& p)
 {
     const double eps = 0.01;
@@ -65,6 +68,7 @@ bool is_position_empty(const vector<Pos>& pp, const Pos& p)
     return true;
 }
 
+static
 double mod1(double x) { return x - floor(x); }
 
 void add_symmetric_images(Atom& a, const SgOps& sg_ops)
@@ -158,8 +162,7 @@ int parse_atoms(const char* s, Crystal& cr)
             a.neutron_sf = find_in_nn92(a.symbol);
             cr.atoms.push_back(a);
             add_symmetric_images(cr.atoms[atom_count], cr.sg_ops);
-        }
-        else {
+        } else {
             Atom &b = cr.atoms[atom_count];
             if (strcmp(a.symbol, b.symbol) != 0) {
                 memcpy(b.symbol, a.symbol, 8);
@@ -253,6 +256,7 @@ int get_sg_order(const SgOps& sg_ops)
     return sg_ops.tr.size() * sg_ops.seitz.size() * (sg_ops.inv ? 2 : 1);
 }
 
+static
 char parse_sg_extension(const char *symbol, char *qualif)
 {
     if (symbol == NULL || *symbol == '\0') {
@@ -276,6 +280,7 @@ char parse_sg_extension(const char *symbol, char *qualif)
     return ext;
 }
 
+static
 const SpaceGroupSetting* parse_hm_or_hall(const char *symbol)
 {
     // copy and 'normalize' symbol (up to ':') to table s
@@ -284,14 +289,12 @@ const SpaceGroupSetting* parse_hm_or_hall(const char *symbol)
         if (*symbol == '\0' || *symbol == ':') {
             s[i] = '\0';
             break;
-        }
-        else if (isspace(*symbol)) {
+        } else if (isspace(*symbol)) {
             s[i] = ' ';
             ++symbol;
             while (isspace(*symbol))
                 ++symbol;
-        }
-        else {
+        } else {
             // In HM symbols, first character is upper case letter.
             // In Hall symbols, the second character is upper case.
             // The first and second chars are either upper or ' ' or '-'.
@@ -313,14 +316,14 @@ const SpaceGroupSetting* parse_hm_or_hall(const char *symbol)
                 }
             }
             return p;
-        }
-        else if (strcmp(p->Hall + (p->Hall[0] == ' ' ? 1 : 0), s) == 0) {
+        } else if (strcmp(p->Hall + (p->Hall[0] == ' ' ? 1 : 0), s) == 0) {
             return p;
         }
     }
     return NULL;
 }
 
+static
 const SpaceGroupSetting* find_space_group_setting(int sgn, const char *setting)
 {
     char qualif[5];
@@ -346,8 +349,7 @@ const SpaceGroupSetting* parse_any_sg_symbol(const char *symbol)
         const char* colon = strchr(symbol, ':');
         int sgn = strtol(symbol, NULL, 10);
         return find_space_group_setting(sgn, colon);
-    }
-    else {
+    } else {
         return parse_hm_or_hall(symbol);
     }
 }
@@ -385,8 +387,7 @@ void Crystal::set_space_group(const SpaceGroupSetting* sgs_)
     }
     if (sgs->Hall[0] == '-') {
         sg_ops.inv = true;
-    }
-    else {
+    } else {
         const char* t = strstr(sgs->Hall, " -1");
         if (t != NULL) {
             sg_ops.inv = true;
@@ -405,6 +406,7 @@ void Crystal::set_space_group(const SpaceGroupSetting* sgs_)
 
 // returns true if exists t in sg_ops.tr, such that: h*(t+T) != n
 // used by is_sys_absent()
+static
 bool has_nonunit_tr(const SgOps& sg_ops, const int* T, int h, int k, int l)
 {
     for (vector<TransVec>::const_iterator t = sg_ops.tr.begin();
@@ -414,6 +416,7 @@ bool has_nonunit_tr(const SgOps& sg_ops, const int* T, int h, int k, int l)
     return false;
 }
 
+static
 bool is_sys_absent(const SgOps& sg_ops, int h, int k, int l)
 {
     for (size_t i = 0; i < sg_ops.seitz.size(); ++i) {
@@ -425,8 +428,7 @@ bool is_sys_absent(const SgOps& sg_ops, int h, int k, int l)
         if (h == M[0] && k == M[1] && l == M[2]) {
             if (has_nonunit_tr(sg_ops, T, h, k, l))
                 return true;
-        }
-        else if (h == -M[0] && k == -M[1] && l == -M[2] && sg_ops.inv) {
+        } else if (h == -M[0] && k == -M[1] && l == -M[2] && sg_ops.inv) {
             int ts[3] = { sg_ops.inv_t.x - T[0],
                           sg_ops.inv_t.y - T[1],
                           sg_ops.inv_t.z - T[2] };
@@ -500,6 +502,7 @@ void Crystal::generate_reflections(double min_d)
 
 
 // stol = sin(theta)/lambda
+static
 void set_F2(Plane& p, const vector<Atom>& atoms,
                  RadiationType radiation, double stol)
 {
@@ -526,6 +529,7 @@ void set_F2(Plane& p, const vector<Atom>& atoms,
     //       p.h, p.k, p.l, F_real, F_img, p.F2);
 }
 
+static
 void set_lpf(PlanesWithSameD &bp, RadiationType radiation, double lambda)
 {
     if (lambda == 0)
@@ -537,8 +541,7 @@ void set_lpf(PlanesWithSameD &bp, RadiationType radiation, double lambda)
             // LP = (1 + cos(2T)^2) / (cos(T) sin(T)^2)
             //  (Pecharsky & Zavalij, eq. (2.70), p. 192)
             bp.lpf = (1 + cos(2*T)*cos(2*T)) / (cos(T)*sin(T)*sin(T));
-        }
-        else if (radiation == kNeutron) {
+        } else if (radiation == kNeutron) {
             // Kisi & Howard, Applications of Neutron Powder Diffraction (2.38)
             // no polarization only the Lorentz factor:
             // L = 1 / (4 sin^2(T) cos(T))
@@ -659,6 +662,7 @@ const Anode anodes[] = {
 };
 
 
+static
 const char* default_cel_files[][2] = {
 
 {"bSiC",
@@ -717,63 +721,56 @@ const char* default_cel_files[][2] = {
 
 CelFile read_cel_file(FILE *f)
 {
-    CelFile cel;
-    cel.sgs = NULL;
+    CelFile cel = { 0., 0., 0., 0., 0., 0., NULL, vector<AtomInCell>() };
     if (!f)
         return cel;
     char s[20];
     int r = fscanf(f, "%4s %lf %lf %lf %lf %lf %lf",
                s, &cel.a, &cel.b, &cel.c, &cel.alpha, &cel.beta, &cel.gamma);
-    if (r != 7) {
-        fclose(f);
+    if (r != 7)
         return cel;
-    }
     if (strcmp(s, "cell") != 0 && strcmp(s, "CELL") != 0
             && strcmp(s, "Cell") != 0) {
-        fclose(f);
         return cel;
     }
     while (1) {
-        fscanf(f, "%12s", s);
+        r = fscanf(f, "%12s", s);
+        if (r != 1)
+            return cel;
         if (strcmp(s, "RGNR") == 0 || strcmp(s, "rgnr") == 0
                 || strcmp(s, "Rgnr") == 0)
             break;
         AtomInCell atom;
         r = fscanf(f, "%d %lf %lf %lf", &atom.Z, &atom.x, &atom.y, &atom.z);
         if (r != 4) {
-            fclose(f);
             return cel;
         }
         cel.atoms.push_back(atom);
         // skip the rest of the line
-        for (char c = fgetc(f); c != '\n' && c != EOF; c = fgetc(f))
+        for (int c = fgetc(f); c != '\n' && c != EOF; c = fgetc(f))
             ;
     }
     int sgn;
     r = fscanf(f, "%d", &sgn);
-    if (r != 1) {
-        fclose(f);
+    if (r != 1)
         return cel;
-    }
-    if (sgn < 1 || sgn > 230) {
-        fclose(f);
+    if (sgn < 1 || sgn > 230)
         return cel;
-    }
     cel.sgs = find_first_sg_with_number(sgn);
-    for (char c = fgetc(f); c != '\n' && c != EOF; c = fgetc(f)) {
+    for (int c = fgetc(f); c != '\n' && c != EOF; c = fgetc(f)) {
         if (c == ':') {
-            fscanf(f, "%8s", s);
-            cel.sgs = find_space_group_setting(sgn, s);
+            r = fscanf(f, "%8s", s);
+            if (r == 1)
+                cel.sgs = find_space_group_setting(sgn, s);
             break;
-        }
-        else if (isdigit(c)) {
+        } else if (isdigit(c)) {
             ungetc(c, f);
             int pc_setting;
-            fscanf(f, "%d", &pc_setting);
-            cel.sgs = get_sg_from_powdercell_rgnr(sgn, pc_setting);
+            r = fscanf(f, "%d", &pc_setting);
+            if (r == 1)
+                cel.sgs = get_sg_from_powdercell_rgnr(sgn, pc_setting);
             break;
-        }
-        else if (!isspace(c))
+        } else if (!isspace(c))
             break;
     }
     return cel;

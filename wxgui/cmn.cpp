@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #include <ctype.h>
@@ -242,8 +242,7 @@ void updateControlWithItems(wxControlWithItems *cwi, vector<string> const& v)
         cwi->Clear();
         for (size_t i = 0; i < v.size(); ++i)
             cwi->Append(s2wx(v[i]));
-    }
-    else
+    } else
         for (size_t i = 0; i < v.size(); ++i)
             if (cwi->GetString(i) != s2wx(v[i]))
                 cwi->SetString(i, s2wx(v[i]));

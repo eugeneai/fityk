@@ -2,13 +2,13 @@
 // Copyright 2007-2010 Marcin Wojdyr
 // Licence: wxWidgets licence
 
-#ifndef FITYK_WX_FANCYRC_H_
-#define FITYK_WX_FANCYRC_H_
+#ifndef FITYK_WX_PARPAN_H_
+#define FITYK_WX_PARPAN_H_
 
 #include <wx/tooltip.h>
-#include <math.h>
 #include <vector>
-#include "fityk/common.h" // realt
+#include "fityk/fityk.h" // realt
+#include "drag.h" // DraggedFuncObserver
 
 class SideBar;
 class ValueChangingWidget;
@@ -16,6 +16,7 @@ class ValueChangingWidget;
 class ValueChangingWidgetObserver
 {
 public:
+    virtual ~ValueChangingWidgetObserver() {}
     virtual void change_value(ValueChangingWidget *w, double factor) = 0;
     virtual void finalize_changes() = 0;
 };
@@ -49,6 +50,7 @@ private:
 class ParameterPanelObserver
 {
 public:
+    virtual ~ParameterPanelObserver() {}
     virtual void on_parameter_changing(const std::vector<realt>& values) = 0;
     virtual void on_parameter_changed(int n) = 0;
     virtual void on_parameter_lock_clicked(int n, int state) = 0;
@@ -70,7 +72,9 @@ struct ParameterRowData
 /// the lock button is for marking the number as constant (locked),
 /// the slider is (ab)used as a handle for changing smoothly the number.
 /// There is a title (a text label) at the top.
-class ParameterPanel : public wxPanel, public ValueChangingWidgetObserver
+class ParameterPanel : public wxPanel,
+                       public ValueChangingWidgetObserver,
+                       public DraggedFuncObserver
 {
 public:
     ParameterPanel(wxWindow* parent, wxWindowID id,
@@ -84,6 +88,7 @@ public:
     double get_value(int n) const;
     void set_value(int n, double value);
     int get_count() const { return values_.size(); }
+    const std::vector<realt>& values() const { return values_; }
     wxString get_title() const { return title_st_->GetLabel(); }
     void set_title(const wxString& title) { title_st_->SetLabel(title); }
     void set_key_sink(wxEvtHandler* sink, wxObjectEventFunction method);
@@ -91,6 +96,9 @@ public:
     // implementation of ValueChangingWidgetObserver
     virtual void change_value(ValueChangingWidget *w, double factor);
     virtual void finalize_changes();
+
+    // implementation of DraggedFuncObserver
+    virtual void change_parameter_value(int idx, double value);
 
 private:
     ParameterPanelObserver* observer_;

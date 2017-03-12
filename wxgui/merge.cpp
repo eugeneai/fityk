@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright Marcin Wojdyr.
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr.
 // Licence: GNU General Public License ver. 2+
 
 #include <wx/wx.h>
@@ -59,13 +59,13 @@ MergePointsDlg::MergePointsDlg(wxWindow* parent, wxWindowID id)
 void MergePointsDlg::update_info()
 {
     vector<int> dd = frame->get_selected_data_indices();
-    const fityk::Data* data = ftk->get_data(dd[0]);
+    const fityk::Data* data = ftk->dk.data(dd[0]);
     double x_min = data->get_x_min();
     double x_max = data->get_x_max();
     int n = data->points().size();
     wxString dstr = wxString::Format(wxT("@%d"), dd[0]);
     for (size_t i = 1; i < dd.size(); ++i) {
-        data = ftk->get_data(i);
+        data = ftk->dk.data(i);
         if (data->get_x_min() < x_min)
             x_min = data->get_x_min();
         if (data->get_x_max() > x_max)

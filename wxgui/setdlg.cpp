@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 ///  Settings Dialog (SettingsDlg)
@@ -11,7 +11,6 @@
 
 #include "setdlg.h"
 #include "fityk/settings.h"
-#include "fityk/ui.h"  //startup_commands_filename
 #include "fityk/logic.h" // settings_mgr()
 #include "frame.h"  //ftk
 
@@ -280,7 +279,7 @@ SettingsDlg::SettingsDlg(wxWindow* parent)
     //finish layout
     wxBoxSizer *top_sizer = new wxBoxSizer (wxVERTICAL);
     top_sizer->Add(nb, 1, wxLEFT|wxRIGHT|wxTOP|wxEXPAND, 10);
-#if __WXMAC__
+#ifdef __WXMAC__
     nb->SetMinSize(wxSize(-1, 300));
 #endif
     wxStaticText *note = new SmallStaticText(this,

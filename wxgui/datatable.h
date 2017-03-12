@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// DataTableDlg: Data > Table dialog
 
@@ -11,7 +11,7 @@ namespace fityk { class Data; }
 class GridTable;
 class wxGrid;
 class wxGridEvent;
-class wxCheckBox;;
+class wxCheckBox;
 
 class DataTableDlg : public wxDialog
 {

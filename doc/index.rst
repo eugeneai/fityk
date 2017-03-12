@@ -11,8 +11,14 @@
 .. role:: html(raw)
    :format: html
 
+.. image:: fityk-banner.png
+   :align: center
+   :target: http://fityk.nieto.pl
+   :class: banner
+
 .. raw:: html
 
+  <div class="clearer" style="height:10px"></div>
   <div align="right" class="screenshot">
    <p class="quote">
     <i>Excellent GUI and command-line curve fitting tool</i><br />
@@ -31,9 +37,10 @@
 Fityk *[fi:tik]* is a program for data processing
 and nonlinear **curve fitting**.
 
-Although it is primarily used...
+Primarily used
 
-* by scientists who analyse data from powder diffraction, chromatography,
+* by scientists_
+  who analyse data from powder diffraction, chromatography,
   photoluminescence and photoelectron spectroscopy,
   infrared and Raman spectroscopy, and other experimental techniques,
 
@@ -42,8 +49,9 @@ Although it is primarily used...
 * to fit peaks -- bell-shaped functions (Gaussian, Lorentzian, Voigt,
   Pearson VII, bifurcated Gaussian, EMG, Doniach-Sunjic, etc.),
 
-... the program can be used for any task that requires fitting a curve
-to 2D (*x*,\ *y*) data.
+but it is suitable for fitting any curve to 2D (*x*,\ *y*) data.
+
+.. _scientists: https://scholar.google.com/scholar?cites=1686729773533771289
 
 .. _contents:
 
@@ -75,7 +83,7 @@ Features
   with reference datasets from NIST,
 * an add-on for powder diffraction data (Pawley refinement)
 * modular :wiki:`architecture <Architecture>`,
-* open source licence (`GPL <http://creativecommons.org/licenses/GPL/2.0/>`_).
+* open source licence (GPLv2+).
 
 .. _Download:
 
@@ -86,13 +94,12 @@ In an attempt to make this software self-sustaining and actively
 developed in the future,
 `new binaries </subscribers>`_ are available to subscribers only:
 
-|ico-win| MS Windows: :download:`-setup.exe`  $
+|ico-win| MS Windows: :subscribers_download:`-setup.exe`  $
 
-|ico-osx| Mac OS X (10.4 or later): :download:`-osx.zip`  $
+|ico-osx| Mac OS X (10.6 or later): :subscribers_download:`-osx.zip`  $
 
-|ico-tux| Linux: `deb packages </subscribers>`_ (i386 and x64).
-:smallfont:`Tested only on Ubuntu 10.10.
-Email me if you need a package for another distro.`
+|ico-tux| Linux: binary `RPM and deb packages </subscribers>`_
+:smallfont:`for about 10 distros (incl. Ubuntu, Fedora, Suse), 32- and 64-bit.`
 
 .. raw:: html
 
@@ -102,18 +109,19 @@ Subscribers have access to all versions of the program and to e-mail support.
 The program can be installed on many computers and can be also used
 after the end of subscription.
 
-* `1 month subscription <https://www.plimus.com/jsp/buynow.jsp?contractId=2918496>`_: $115 (≈ €90)
+* `1 month subscription <https://sites.fastspring.com/nieto/instant/fityk-1M>`_: $115 (≈ €90)
 
-* `1 year subscription <https://www.plimus.com/jsp/buynow.jsp?contractId=2918202>`_: $199 (≈ €150)
+* `1 year subscription <https://sites.fastspring.com/nieto/instant/fityk-1Y>`_: $199 (≈ €150)
 
-* `2 years subscription <https://www.plimus.com/jsp/buynow.jsp?contractId=3146878>`_: $299 (≈ €230)
+* `2 years subscription <https://sites.fastspring.com/nieto/instant/fityk-2Y>`_: $299 (≈ €225)
 
 .. raw:: html
 
    <div class="smallfont">
 
-There is a discount for home users and students,
-email wojdyr@gmail.com for details.
+Fityk is usually bought by companies and institutions.
+If you're a home user or a student in an institution that won't buy software
+for you - email wojdyr@gmail.com for info about discount.
 
 .. raw:: html
 
@@ -126,9 +134,9 @@ for `Windows <https://github.com/wojdyr/fityk/downloads>`_
 and Linux (Ubuntu PPA_ and RPMs from OBS_).
 
 Source code: `GitHub <https://github.com/wojdyr/fityk>`_
-:html:`<a class="FlattrButton" style="display:none;" rev="flattr;button:compact;" href="http://fityk.nieto.pl"></a>`
+(`releases <https://github.com/wojdyr/fityk/releases>`_)
 
-Version 1.2.1 was released on 2012-11-05
+Version 1.3.1 was released on 2016-12-19
 (`changelog <https://github.com/wojdyr/fityk/raw/master/NEWS>`_).
 New version `notifications <http://fityk-announce.nieto.pl/>`_
 are delivered via email and feeds.
@@ -145,9 +153,10 @@ Documentation
 =============
 
 * `Manual <fityk-manual.html>`_
-  (chapters :ref:`intro`, :ref:`getstarted`, :ref:`lang`, :ref:`data`,
-  :ref:`model`, :ref:`fit`, :ref:`ref`)
-  and the same `in PDF <http://www.unipress.waw.pl/fityk/fityk-manual.pdf>`_,
+  (chapters :ref:`intro`, :ref:`getstarted`, :ref:`data`,
+  :ref:`model`, :ref:`fit`, :ref:`scripts`, :ref:`ref`).
+* PDF, ePUB and older versions of the manual can be downloaded
+  `from Read the Docs <https://readthedocs.org/projects/fityk/downloads/>`_.
 
 * `Fityk Wiki <https://github.com/wojdyr/fityk/wiki>`_
   (you are welcome to contribute).
@@ -156,7 +165,7 @@ Citing Fityk in academic papers:
 M. Wojdyr,
 `J. Appl. Cryst. 43, 1126-1128 <http://dx.doi.org/10.1107/S0021889810030499>`_
 (2010)
-[`reprint <http://www.unipress.waw.pl/fityk/fityk-JAC-10-reprint.pdf>`_]
+[`reprint <http://wojdyr.github.io/fityk-JAC-10-reprint.pdf>`_]
 
 .. _Support:
 
@@ -181,7 +190,7 @@ or, if it already is in the list, in assigning higher priority to it.
    $(document).ready(function(){
      $("#features").hide();
      $("#features").prev().after(
-      "<p id='expand_features'><a href=''><span class='h1'>Features</span> &nbsp; <span class='smallfont'>[show]</span></a></p>");
+      "<p id='expand_features'><a href=''><span class='h1'>Features</span> &nbsp; <span>[show]</span></a></p>");
      $("#expand_features a").click(function(event){
        $(this).parent().hide();
        $("#features").show('slow');
@@ -195,13 +204,6 @@ or, if it already is in the list, in assigning higher priority to it.
       location.href = $(this).attr("href") + "?u=" + reply;
   });
 
-     var s = document.createElement('script'), t = document.getElementsByTagName('script')[0];
-     s.type = 'text/javascript';
-     s.async = true;
-     s.src = 'http://api.flattr.com/js/0.6/load.js?mode=auto';
-     t.parentNode.insertBefore(s, t);
-
    });
    //--> </script>
-
 

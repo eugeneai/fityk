@@ -19,6 +19,7 @@
 #include "guess.h"
 #include "transform.h"
 #include "ui.h"
+#include "luabridge.h"
 
 using namespace std;
 
@@ -28,22 +29,21 @@ RealRange args2range(const Token& t1, const Token& t2)
 {
     RealRange range;
     if (t1.type == kTokenExpr)
-        range.from = t1.value.d;
+        range.lo = t1.value.d;
     if (t2.type == kTokenExpr)
-        range.to = t2.value.d;
+        range.hi = t2.value.d;
     return range;
 }
 
-void add_dms_from_token(Ftk* F, const Token& token, vector<DataAndModel*>& dms)
+void token_to_data(Full* F, const Token& token, vector<Data*>& ds)
 {
     assert(token.type == kTokenDataset);
     int d = token.value.i;
     if (d == Lexer::kAll) {
-        dms = F->get_dms();
+        ds = F->dk.datas();
         return;
-    }
-    else
-        dms.push_back(F->get_dm(d));
+    } else
+        ds.push_back(F->dk.data(d));
 }
 
 VMData* Runner::get_vm_from_token(const Token& t) const
@@ -54,7 +54,7 @@ VMData* Runner::get_vm_from_token(const Token& t) const
 
 void Runner::command_set(const vector<Token>& args)
 {
-    SettingsMgr *sm = F_->settings_mgr();
+    SettingsMgr *sm = F_->mutable_settings_mgr();
     for (size_t i = 1; i < args.size(); i += 2) {
         string key = args[i-1].as_string();
         if (key == "exit_on_warning" /*unused since 1.1.1*/) {
@@ -66,6 +66,12 @@ void Runner::command_set(const vector<Token>& args)
         else
             sm->set_as_string(key, Lexer::get_string(args[i]));
     }
+}
+
+void Runner::command_ui(const vector<Token>& args)
+{
+    assert(args.size() == 2);
+    F_->ui()->hint_ui(args[0].as_string(), args[1].as_string());
 }
 
 void Runner::command_undefine(const vector<Token>& args)
@@ -85,7 +91,7 @@ void Runner::command_delete(const vector<Token>& args)
             funcs.push_back(Lexer::get_string(*i));
         else if (i->type == kTokenVarname)
             vars.push_back(Lexer::get_string(*i));
-        else if (i->type == kTokenFilename || i->type == kTokenString)
+        else if (i->type == kTokenWord || i->type == kTokenString)
             files.push_back(Lexer::get_string(*i));
         else
             assert(0);
@@ -93,7 +99,7 @@ void Runner::command_delete(const vector<Token>& args)
     if (!dd.empty()) {
         sort(dd.rbegin(), dd.rend());
         v_foreach (int, j, dd)
-            F_->remove_dm(*j);
+            F_->dk.remove(*j);
     }
     F_->mgr.delete_funcs(funcs);
     F_->mgr.delete_variables(vars);
@@ -114,7 +120,7 @@ void Runner::command_delete_points(const vector<Token>& args, int ds)
     ep_.clear_vm();
     ep_.parse_expr(lex, ds);
 
-    Data *data = F_->get_data(ds);
+    Data *data = F_->dk.data(ds);
     const vector<Point>& p = data->points();
     int len = data->points().size();
     vector<Point> new_p;
@@ -145,53 +151,44 @@ void Runner::command_exec(TokenType tt, const string& str)
     }
 
     // exec filename
-    else {
-        F_->ui()->exec_script(str);
-    }
+    else if (endswith(str, ".lua"))
+        F_->lua_bridge()->exec_lua_script(str);
+    else
+        F_->ui()->exec_fityk_script(str);
+
 }
 
 void Runner::command_fit(const vector<Token>& args, int ds)
 {
     if (args.empty()) {
-        F_->get_fit()->fit(-1, vector1(F_->get_dm(ds)));
+        F_->get_fit()->fit(-1, vector1(F_->dk.data(ds)));
         F_->outdated_plot();
-    }
-    else if (args[0].type == kTokenDataset) {
-        vector<DataAndModel*> dms;
+    } else if (args[0].type == kTokenDataset) {
+        vector<Data*> datas;
         v_foreach(Token, i, args)
-            add_dms_from_token(F_, *i, dms);
-        F_->get_fit()->fit(-1, dms);
+            token_to_data(F_, *i, datas);
+        F_->get_fit()->fit(-1, datas);
         F_->outdated_plot();
-    }
-    else if (args[0].type == kTokenNumber) {
+    } else if (args[0].type == kTokenNumber) {
         int n_steps = iround(args[0].value.d);
-        vector<DataAndModel*> dms;
+        vector<Data*> datas;
         for (size_t i = 1; i < args.size(); ++i)
-            add_dms_from_token(F_, args[i], dms);
-        if (dms.empty())
-            dms.push_back(F_->get_dm(ds));
-        F_->get_fit()->fit(n_steps, dms);
+            token_to_data(F_, args[i], datas);
+        if (datas.empty())
+            datas.push_back(F_->dk.data(ds));
+        F_->get_fit()->fit(n_steps, datas);
         F_->outdated_plot();
-    }
-    else if (args[0].type == kTokenPlus) {
-        int n_steps = args.size() > 1 ? iround(args[1].value.d) : -1;
-        F_->get_fit()->continue_fit(n_steps);
+    } else if (args[0].as_string() == "undo") {
+        F_->fit_manager()->load_param_history(-1, true);
         F_->outdated_plot();
-    }
-    else if (args[0].as_string() == "undo") {
-        F_->get_fit_container()->load_param_history(-1, true);
+    } else if (args[0].as_string() == "redo") {
+        F_->fit_manager()->load_param_history(+1, true);
         F_->outdated_plot();
-    }
-    else if (args[0].as_string() == "redo") {
-        F_->get_fit_container()->load_param_history(+1, true);
-        F_->outdated_plot();
-    }
-    else if (args[0].as_string() == "clear_history") {
-        F_->get_fit_container()->clear_param_history();
-    }
-    else if (args[0].as_string() == "history") {
+    } else if (args[0].as_string() == "clear_history") {
+        F_->fit_manager()->clear_param_history();
+    } else if (args[0].as_string() == "history") {
         int n = iround(args[1].value.d);
-        F_->get_fit_container()->load_param_history(n, false);
+        F_->fit_manager()->load_param_history(n, false);
         F_->outdated_plot();
     }
 }
@@ -199,16 +196,13 @@ void Runner::command_fit(const vector<Token>& args, int ds)
 
 void Runner::command_guess(const vector<Token>& args, int ds)
 {
-    DataAndModel* dm = F_->get_dm(ds);
-    Data const* data = dm->data();
-
+    Data* data = F_->dk.data(ds);
     string name; // optional function name
     int ignore_idx = -1;
     if (args[0].type == kTokenFuncname) {
         name = Lexer::get_string(args[0]);
         ignore_idx = F_->mgr.find_function_nr(name);
-    }
-    else
+    } else
         name = F_->mgr.next_func_name();
 
     // function type
@@ -230,29 +224,33 @@ void Runner::command_guess(const vector<Token>& args, int ds)
 
     // range
     RealRange range = args2range(*(args.end()-2), *(args.end()-1));
-    if (range.from >= range.to)
+    if (range.lo >= range.hi)
         throw ExecuteError("invalid range");
 
     // initialize guess
-    int lb = data->get_lower_bound_ac(range.from);
-    int rb = data->get_upper_bound_ac(range.to);
     Guess g(F_->get_settings());
-    g.initialize(dm, lb, rb, ignore_idx);
+    g.set_data(data, range, ignore_idx);
 
     // guess
     vector<string> gkeys;
     vector<realt> gvals;
-    if (tp->peak_d) {
-        boost::array<double,4> peak_v = g.estimate_peak_parameters();
-        gkeys.insert(gkeys.end(), Guess::peak_traits.begin(),
-                                  Guess::peak_traits.end());
-        gvals.insert(gvals.end(), peak_v.begin(), peak_v.end());
-    }
-    if (tp->linear_d) {
-        boost::array<double,3> lin_v = g.estimate_linear_parameters();
+    if (tp->traits & Tplate::kLinear) {
         gkeys.insert(gkeys.end(), Guess::linear_traits.begin(),
                                   Guess::linear_traits.end());
-        gvals.insert(gvals.end(), lin_v.begin(), lin_v.end());
+        vector<double> v = g.estimate_linear_parameters();
+        gvals.insert(gvals.end(), v.begin(), v.end());
+    }
+    if (tp->traits & Tplate::kPeak) {
+        gkeys.insert(gkeys.end(), Guess::peak_traits.begin(),
+                                  Guess::peak_traits.end());
+        vector<double> v = g.estimate_peak_parameters();
+        gvals.insert(gvals.end(), v.begin(), v.end());
+    }
+    if (tp->traits & Tplate::kSigmoid) {
+        gkeys.insert(gkeys.end(), Guess::sigmoid_traits.begin(),
+                                  Guess::sigmoid_traits.end());
+        vector<double> v = g.estimate_sigmoid_parameters();
+        gvals.insert(gvals.end(), v.begin(), v.end());
     }
 
     // calculate default values
@@ -261,21 +259,14 @@ void Runner::command_guess(const vector<Token>& args, int ds)
         if (func_args[i] != NULL)
             continue;
         string dv = tp->defvals[i].empty() ? tp->fargs[i] : tp->defvals[i];
-        ep_.clear_vm();
-        Lexer lex(dv.c_str());
-        bool r = ep_.parse_full(lex, 0, &gkeys);
-        if (!r)
-            throw ExecuteError("Cannot guess `" + dv + "' in " + tp->name);
-        double value = ep_.calculate_custom(gvals);
-        vd_storage[i].append_code(OP_TILDE);
-        vd_storage[i].append_number(value);
+        defval_to_vm(dv, gkeys, gvals, vd_storage[i]);
         func_args[i] = &vd_storage[i];
     }
 
     // add function
     int idx = F_->mgr.assign_func(name, tp, func_args);
 
-    FunctionSum& ff = dm->model()->get_ff();
+    FunctionSum& ff = data->model()->get_ff();
     if (!contains_element(ff.names, name)) {
         ff.names.push_back(name);
         ff.idx.push_back(idx);
@@ -289,20 +280,22 @@ void Runner::command_plot(const vector<Token>& args, int ds)
     RealRange hor = args2range(args[0], args[1]);
     RealRange ver = args2range(args[2], args[3]);
     vector<int> dd;
-    if (args.size() > 4) {
-        for (size_t i = 4; i < args.size(); ++i) {
-            int n = args[i].value.i;
-            if (n == Lexer::kAll)
-                for (int j = 0; j != F_->get_dm_count(); ++j)
-                    dd.push_back(j);
-            else
-                dd.push_back(n);
-        }
+    for (size_t i = 4; i < args.size() && args[i].type == kTokenDataset; ++i) {
+        int n = args[i].value.i;
+        if (n == Lexer::kAll)
+            for (int j = 0; j != F_->dk.count(); ++j)
+                dd.push_back(j);
+        else
+            dd.push_back(n);
     }
-    else
+    if (dd.empty())
         dd.push_back(ds);
     F_->view.change_view(hor, ver, dd);
-    F_->ui()->draw_plot(UserInterface::kRepaintImmediately);
+    string filename;
+    if (args.back().type == kTokenWord || args.back().type == kTokenString)
+        filename = Lexer::get_string(args.back());
+    F_->ui()->draw_plot(UserInterface::kRepaintImmediately,
+                        filename.empty() ? NULL : filename.c_str());
 }
 
 void Runner::command_dataset_tr(const vector<Token>& args)
@@ -313,11 +306,48 @@ void Runner::command_dataset_tr(const vector<Token>& args)
     int n = args[0].value.i;
     Lexer lex(args[1].str);
     ep_.clear_vm();
-    ep_.parse_expr(lex, F_->default_dm(), NULL, NULL,
+    ep_.parse_expr(lex, F_->dk.default_idx(), NULL, NULL,
                    ExpressionParser::kDatasetTrMode);
-    DatasetTransformer dt(F_);
-    dt.run_dt(ep_.vm(), n);
+
+    if (n == Lexer::kNew) {
+        auto_ptr<Data> data_out(new Data(F_, F_->mgr.create_model()));
+        run_data_transform(F_->dk, ep_.vm(), data_out.get());
+        F_->dk.append(data_out.release());
+    } else
+        run_data_transform(F_->dk, ep_.vm(), F_->dk.data(n));
+
+
     F_->outdated_plot();
+}
+
+// Default values (example: "0.5*height") are evaluated.
+// Vectors 'names' and 'values' have corresponding items, such as
+// names=[center, height], values=[20.4, 300].
+// Returns vm code that creates simple-variable with obtained value.
+// This code is simply: TILDE NUMBER. In this example NUMBER would be 150.
+void Runner::defval_to_vm(const string& dv,
+                          const vector<string>& names,
+                          const vector<realt>& values,
+                          VMData& output)
+{
+    assert(names.size() == values.size());
+    ep_.clear_vm();
+    Lexer lex(dv.c_str());
+    bool r = ep_.parse_full(lex, 0, &names);
+    bool has_domain = (lex.peek_token().type == kTokenLSquare);
+    if (!r && !has_domain) {
+        throw ExecuteError("Cannot guess or calculate `" + dv + "'");
+    }
+    double value = ep_.calculate_custom(values);
+    output.append_code(OP_TILDE);
+    output.append_number(value);
+    if (has_domain) {
+        RealRange domain = ep_.parse_domain(lex, 0);
+        output.append_number(domain.lo);
+        output.append_number(domain.hi);
+    } else {
+        output.append_code(OP_TILDE);
+    }
 }
 
 // returns the number of given args
@@ -357,22 +387,10 @@ int Runner::make_func_from_template(const string& name,
         for (size_t i = 0; i != tp->fargs.size(); ++i) {
             if (func_args[i] != NULL)
                 continue;
-            // Default values are calculated as values
-            // and converted to the "TILDE NUMBER" code.
             if (!tp->defvals.empty() && !tp->defvals[i].empty()) {
-                string dv = tp->defvals[i];
-                ep_.clear_vm();
-                Lexer lex(dv.c_str());
-                bool r = ep_.parse_full(lex, 0, &par_names);
-                if (!r)
-                    throw ExecuteError("Cannot calculate `" + dv + "' in "
-                                       + tp->name);
-                double value = ep_.calculate_custom(cvals);
-                vd_storage[i].append_code(OP_TILDE);
-                vd_storage[i].append_number(value);
+                defval_to_vm(tp->defvals[i], par_names, cvals, vd_storage[i]);
                 func_args[i] = &vd_storage[i];
-            }
-            else
+            } else
                 throw ExecuteError("missing parameter " + tp->fargs[i]);
         }
     }
@@ -381,20 +399,25 @@ int Runner::make_func_from_template(const string& name,
 }
 
 static
-string get_func(const Ftk *F, int ds, vector<Token>::const_iterator a)
+string get_func(const Full *F, int ds, vector<Token>::const_iterator a,
+                int *n_args=NULL)
 {
-    if (a->type == kTokenFuncname)
+    if (a->type == kTokenFuncname) {
+        if (n_args)
+            *n_args += 1;
         return Lexer::get_string(*a);
+    }
     else {
         assert (a->type == kTokenDataset || a->type == kTokenNop);
         assert((a+1)->type == kTokenUletter);
         assert((a+2)->type == kTokenExpr);
-        assert((a+1)->type == kTokenUletter);
+        if (n_args)
+            *n_args += 3;
         if (a->type == kTokenDataset)
             ds = a->value.i;
         char c = *(a+1)->str;
         int idx = iround((a+2)->value.d);
-        return F->get_model(ds)->get_func_name(c, idx);
+        return F->dk.get_model(ds)->get_func_name(c, idx);
     }
 }
 
@@ -405,8 +428,7 @@ void Runner::command_name_func(const vector<Token>& args, int ds)
     if (args[1].as_string() == "copy") { // copy(%f) or copy(@n.F[idx])
         string orig_name = get_func(F_, ds, args.begin()+2);
         F_->mgr.assign_func_copy(name, orig_name);
-    }
-    else                               // Foo(...)
+    } else                               // Foo(...)
         make_func_from_template(name, args, 1);
     F_->mgr.use_parameters();
     F_->outdated_plot(); //TODO only if function in @active
@@ -414,54 +436,87 @@ void Runner::command_name_func(const vector<Token>& args, int ds)
 
 void Runner::command_assign_param(const vector<Token>& args, int ds)
 {
-    // args: Funcname Lname EVar
-    // args: (Dataset|Nop) (F|Z) Expr Lname EVar
-    string name = get_func(F_, ds, args.begin());
-    string param = (args.end()-2)->as_string();
-    const Token& var = *(args.end()-1);
-    F_->mgr.substitute_func_param(name, param, get_vm_from_token(var));
+    if (args[2].type == kTokenMult || args[1].type == kTokenNop) {
+        command_assign_all(args, ds);
+    } else {
+        // args: Funcname Lname EVar
+        // args: (Dataset|Nop) (F|Z) Expr Lname EVar
+        string name = get_func(F_, ds, args.begin());
+        string param = (args.end()-2)->as_string();
+        const Token& var = *(args.end()-1);
+        F_->mgr.substitute_func_param(name, param, get_vm_from_token(var));
+    }
     F_->mgr.use_parameters();
     F_->outdated_plot();
 }
 
 void Runner::command_assign_all(const vector<Token>& args, int ds)
 {
-    // args: (Dataset|Nop) (F|Z) '*' Lname Expr
+    // args: (Dataset|Nop) (F|Z|Nop) '*' Lname Expr
     assert(args[0].type == kTokenDataset || args[0].type == kTokenNop);
-    assert(args[1].type == kTokenUletter);
-    assert(args[2].type == kTokenMult);
+    assert(args[1].type == kTokenUletter || args[1].type == kTokenNop);
+    assert(args[2].type == kTokenMult || args[2].type == kTokenFuncname);
     assert(args[3].type == kTokenLname);
     assert(args[4].type == kTokenEVar);
     if (args[0].type == kTokenDataset)
         ds = args[0].value.i;
-    char c = *args[1].str;
     string param = args[3].as_string();
     VMData* vd = get_vm_from_token(args[4]);
-    const FunctionSum& fz = F_->get_model(ds)->get_fz(c);
-    v_foreach (string, i, fz.names) {
-        if (contains_element(F_->mgr.find_function(*i)->tp()->fargs, param))
-            F_->mgr.substitute_func_param(*i, param, vd);
+    int cnt = 0;
+    if (args[1].type == kTokenUletter) {
+        char c = *args[1].str;
+        const FunctionSum& fz = F_->dk.get_model(ds)->get_fz(c);
+        v_foreach (string, i, fz.names) {
+            const Function *func = F_->mgr.find_function(*i);
+            if (contains_element(func->tp()->fargs, param)) {
+                F_->mgr.substitute_func_param(*i, param, vd);
+                cnt++;
+            }
+        }
+    } else {
+        string funcname = args[2].as_string().substr(1);
+        v_foreach (Function*, i, F_->mgr.functions()) {
+            if (match_glob((*i)->name.c_str(), funcname.c_str()) &&
+                    contains_element((*i)->tp()->fargs, param)) {
+                F_->mgr.substitute_func_param((*i)->name, param, vd);
+                cnt++;
+            }
+        }
     }
-    F_->mgr.use_parameters();
-    F_->outdated_plot();
+    if (F_->get_verbosity() >= 1)
+        F_->ui()->mesg(S(cnt) + " parameters substituted.");
 }
 
-void Runner::command_name_var(const vector<Token>& args)
+void Runner::command_name_var(const vector<Token>& args, int ds)
 {
-    assert(args.size() == 4);
-    assert(args[0].type == kTokenVarname);
+    assert(args.size() >= 2 && args[0].type == kTokenVarname);
     string name = Lexer::get_string(args[0]);
-    VMData* vd = get_vm_from_token(args[1]);
-    RealRange domain = args2range(args[2], args[3]);
-    int pos = F_->mgr.make_variable(name, vd);
-    //F_->mgr.get_variable(pos)->domain = domain;
-    F_->mgr.set_domain(pos, domain);
+    int n_args;
+    if (args[1].as_string() == "copy") {
+        assert(args.size() > 2);
+        string orig_name;
+        if (args[2].type == kTokenVarname) {  // $v = copy($orig)
+            orig_name = Lexer::get_string(args[2]);
+            n_args = 3;
+        } else {  // $v = copy(%f.height)
+            n_args = 3; // $v "copy" [...] param  -- increased in the next line
+            string func_name = get_func(F_, ds, args.begin()+2, &n_args);
+            string param = args[n_args-1].as_string();
+            orig_name = F_->mgr.find_function(func_name)->var_name(param);
+        }
+        F_->mgr.assign_var_copy(name, orig_name);
+    } else {
+        assert(args.size() == 2 || args.size() == 4);
+        VMData* vd = get_vm_from_token(args[1]);
+        F_->mgr.make_variable(name, vd);
+        n_args = 2;
+    }
     F_->mgr.use_parameters();
     F_->outdated_plot(); // TODO: only for replacing old variable
 }
 
 static
-int get_fz_or_func(const Ftk *F, int ds, vector<Token>::const_iterator a,
+int get_fz_or_func(const Full *F, int ds, vector<Token>::const_iterator a,
                    vector<string>& added)
 {
     // $func -> 1
@@ -469,28 +524,25 @@ int get_fz_or_func(const Ftk *F, int ds, vector<Token>::const_iterator a,
     if (a->type == kTokenFuncname) {
         added.push_back(Lexer::get_string(*a));
         return 1;
-    }
-    else if (a->type == kTokenDataset || a->type == kTokenNop) {
+    } else if (a->type == kTokenDataset || a->type == kTokenNop) {
         int r_ds = a->type == kTokenDataset ? a->value.i : ds;
-        const Model* model = F->get_model(r_ds);
+        const Model* model = F->dk.get_model(r_ds);
         assert((a+1)->type == kTokenUletter);
         char c = *(a+1)->str;
         if ((a+2)->type == kTokenNop) {
             const FunctionSum& s = model->get_fz(c);
             added.insert(added.end(), s.names.begin(), s.names.end());
-        }
-        else {
+        } else {
             int idx = iround((a+2)->value.d);
             added.push_back(model->get_func_name(c, idx));
         }
         return 3;
-    }
-    else
+    } else
         return 0;
 }
 
 static
-void add_functions_to(const Ftk* F, vector<string> const &names,
+void add_functions_to(const Full* F, vector<string> const &names,
                       FunctionSum& sum)
 {
     v_foreach (string, i, names) {
@@ -512,7 +564,7 @@ void Runner::command_change_model(const vector<Token>& args, int ds)
     //       ("copy" ($func | Dataset ("F"|"Z") (Expr|Nop)))
     //      )+
     int lhs_ds = (args[0].type == kTokenDataset ? args[0].value.i : ds);
-    FunctionSum& sum = F_->get_model(lhs_ds)->get_fz(*args[1].str);
+    FunctionSum& sum = F_->dk.get_mutable_model(lhs_ds)->get_fz(*args[1].str);
     bool removed_functions = false;
     if (args[2].type == kTokenAssign && !sum.names.empty()) {
         sum.names.clear();
@@ -533,21 +585,19 @@ void Runner::command_change_model(const vector<Token>& args, int ds)
         // "copy" ...
         else if (args[i].type == kTokenLname && args[i].as_string() == "copy") {
             vector<string> v;
-            int n_tokens = get_fz_or_func(F_, ds, args.begin()+i+1, v);
+            int n_tok = get_fz_or_func(F_, ds, args.begin()+i+1, v);
             v_foreach (string, j, v) {
                 string name = F_->mgr.next_func_name();
                 F_->mgr.assign_func_copy(name, *j);
                 new_names.push_back(name);
             }
-            i += n_tokens;
-        }
-        else if (args[i].type == kTokenCname) { // Foo(1,2)
+            i += n_tok;
+        } else if (args[i].type == kTokenCname) { // Foo(1,2)
             string name = F_->mgr.next_func_name();
             int n_args = make_func_from_template(name, args, i);
             new_names.push_back(name);
             i += 2 * n_args;
-        }
-        else
+        } else
             assert(0);
         assert(i+1 == args.size() || args[i+1].type == kTokenPlus);
     }
@@ -570,16 +620,27 @@ void Runner::command_load(const vector<Token>& args)
             throw ExecuteError("New dataset (@+) cannot be reverted");
         if (args.size() > 2)
             throw ExecuteError("Options can't be given when reverting data");
-        F_->get_data(dataset)->revert();
-    }
-    else { // read given file
+        F_->dk.data(dataset)->revert();
+    } else { // read given file
         string format, options;
-        if (args.size() > 2) {
-            format = args[2].as_string();
-            for (size_t i = 3; i < args.size(); ++i)
-                options += (i == 3 ? "" : " ") + args[i].as_string();
+        vector<Token>::const_iterator it = args.begin() + 2;
+        if (it != args.end() && it->type == kTokenWord) {
+            filename += it->as_string();
+            ++it;
         }
-        F_->import_dataset(dataset, filename, format, options);
+        if (it != args.end()) {
+            format = it->as_string();
+            // "_" means any format (useful for passing option decimal_comma)
+            if (format == "_")
+                format.clear();
+            while (++it != args.end())
+                options += (options.empty() ? "" : " ") + it->as_string();
+        }
+        F_->dk.import_dataset(dataset, filename, format, options, F_, F_->mgr);
+        if (F_->dk.count() == 1) {
+            RealRange r; // default value: [:]
+            F_->view.change_view(r, r, vector1(0));
+        }
     }
     F_->outdated_plot();
 }
@@ -593,7 +654,7 @@ void Runner::command_all_points_tr(const vector<Token>& args, int ds)
         ep_.parse_expr(lex, ds);
         ep_.push_assign_lhs(args[i]);
     }
-    Data *data = F_->get_data(ds);
+    Data *data = F_->dk.data(ds);
     ep_.transform_data(data->get_mutable_points());
     data->after_transform();
     F_->outdated_plot();
@@ -607,7 +668,7 @@ void Runner::command_point_tr(const vector<Token>& args, int ds)
     // be called from here. In typical script, complexity of this function
     // should not depend on the number of points (we assume that in typical
     // script, i.e. in a script from "info state", sorting is not needed).
-    Data *data = F_->get_data(ds);
+    Data *data = F_->dk.data(ds);
     vector<Point>& points = data->get_mutable_points();
     // args: (kTokenUletter kTokenExpr kTokenExpr)+
     bool sorted = true;
@@ -631,11 +692,9 @@ void Runner::command_point_tr(const vector<Token>& args, int ds)
                     (idx+1 < (int) points.size() && val > points[idx+1].x))
                 sorted = false;
             data->find_step();
-        }
-        else if (c == 'y' || c == 'Y') {
+        } else if (c == 'y' || c == 'Y') {
             p.y = val;
-        }
-        else if (c == 's' || c == 'S')
+        } else if (c == 's' || c == 'S')
             p.sigma = val;
         else if (c == 'a' || c == 'A') {
             bool old_a = p.is_active;
@@ -660,7 +719,7 @@ void Runner::command_resize_p(const vector<Token>& args, int ds)
     int val = iround(args[0].value.d);
     if (val < 0 || val > 1e6)
         throw ExecuteError("wrong length: " + S(val));
-    Data *data = F_->get_data(ds);
+    Data *data = F_->dk.data(ds);
     data->get_mutable_points().resize(val);
     data->after_transform();
     F_->outdated_plot();
@@ -714,16 +773,19 @@ void Runner::execute_command(Command& c, int ds)
         case kCmdSleep:
             F_->ui()->wait(c.args[0].value.d);
             break;
+        case kCmdUi:
+            command_ui(c.args);
+            break;
         case kCmdUndef:
             command_undefine(c.args);
             break;
         case kCmdUse:
-            F_->set_default_dm(c.args[0].value.i);
+            F_->dk.set_default_idx(c.args[0].value.i);
             F_->outdated_plot();
             break;
         case kCmdQuit:
             throw ExitRequestedException();
-            break;
+            //break; // unreachable
         case kCmdShell:
             system(c.args[0].str);
             break;
@@ -746,19 +808,13 @@ void Runner::execute_command(Command& c, int ds)
             command_resize_p(c.args, ds);
             break;
         case kCmdTitle:
-            F_->get_data(ds)->set_title(Lexer::get_string(c.args[0]));
+            F_->dk.data(ds)->set_title(Lexer::get_string(c.args[0]));
             break;
         case kCmdAssignParam:
-            if (c.args[2].type == kTokenMult)
-                command_assign_all(c.args, ds);
-            else
-                command_assign_param(c.args, ds);
+            command_assign_param(c.args, ds);
             break;
-        //case kCmdAssignAll:
-        //    command_assign_all(c.args, ds);
-        //    break;
         case kCmdNameVar:
-            command_name_var(c.args);
+            command_name_var(c.args, ds);
             break;
         case kCmdChangeModel:
             command_change_model(c.args, ds);
@@ -776,15 +832,14 @@ void Runner::recalculate_command(Command& c, int ds, Statement& st)
             c.type == kCmdDatasetTr)
         return;
 
-    const vector<Point>& points = F_->get_data(ds)->points();
+    const vector<Point>& points = F_->dk.data(ds)->points();
     vm_foreach (Token, t, c.args)
         if (t->type == kTokenExpr) {
             Lexer lex(t->str);
             ep_.clear_vm();
             ep_.parse_expr(lex, ds);
             t->value.d = ep_.calculate(/*n=*/0, points);
-        }
-        else if (t->type == kTokenEVar) {
+        } else if (t->type == kTokenEVar) {
             Lexer lex(t->str);
             ep_.clear_vm();
             ep_.parse_expr(lex, ds, NULL, NULL, ExpressionParser::kAstMode);
@@ -829,37 +884,44 @@ void Runner::execute_statement(Statement& st)
                     st.datasets.swap(backup.datasets);
                     st.with_args.swap(backup.with_args);
                     st.commands.swap(backup.commands);
-                    int old_default_dm = F_->default_dm();
-                    F_->set_default_dm(*i);
+                    int old_default_idx = F_->dk.default_idx();
+                    F_->dk.set_default_idx(*i);
                     if (eq) {
                         if (c->type == kCmdExec)
-                            F_->ui()->exec_lua_output(str);
+                            F_->lua_bridge()->exec_lua_output(str);
                         else // if (c->type == kCmdLua)
-                            F_->ui()->exec_lua_string("return " + str);
-                    }
-                    else {
+                            F_->lua_bridge()->exec_lua_string("return " + str);
+                    } else {
                         if (c->type == kCmdExec)
                             command_exec(tt, str);
                         else // if (c->type == kCmdLua)
-                            F_->ui()->exec_lua_string(str);
+                            F_->lua_bridge()->exec_lua_string(str);
                     }
-                    F_->set_default_dm(old_default_dm);
+                    F_->dk.set_default_idx(old_default_idx);
                     st.datasets.swap(backup.datasets);
                     st.with_args.swap(backup.with_args);
                     st.commands.swap(backup.commands);
-                }
-                else
+                } else
                     execute_command(*c, *i);
             }
         }
     }
     catch (...) {
         if (!st.with_args.empty())
-            F_->settings_mgr()->set_all(*s_orig);
+            F_->mutable_settings_mgr()->set_all(*s_orig);
         throw;
     }
     if (!st.with_args.empty())
-        F_->settings_mgr()->set_all(*s_orig);
+        F_->mutable_settings_mgr()->set_all(*s_orig);
 }
+
+
+void CommandExecutor::raw_execute_line(const string& str)
+{
+    Lexer lex(str.c_str());
+    while (parser_.parse_statement(lex))
+        runner_.execute_statement(parser_.statement());
+}
+
 
 } // namespace fityk

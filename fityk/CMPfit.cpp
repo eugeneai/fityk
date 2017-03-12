@@ -1,32 +1,20 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
 #include "CMPfit.h"
 #include "logic.h"
-#include "data.h"
+#include "var.h"
 
 using namespace std;
 
 namespace fityk {
 
-void MPfit::init()
-{
-    // 0 value means default
-    mp_conf_.ftol = 0.;
-    mp_conf_.xtol = 0.;
-    mp_conf_.gtol = 0.;
-    mp_conf_.epsfcn = 0.;
-    mp_conf_.stepfactor = 0.;
-    mp_conf_.covtol = 0.;
-    mp_conf_.maxiter = 0;
-    mp_conf_.maxfev = 0;
-    mp_conf_.nprint = 0;
-    mp_conf_.douserscale = 0;
-    mp_conf_.nofinitecheck = 0;
-    mp_conf_.iterproc = NULL;
-}
+#ifndef NDEBUG
+bool debug_deriv_in_mpfit=false; // changed only for tests (must be non-static)
+#endif
 
+static
 int calculate_for_mpfit(int m, int npar, double *par, double *deviates,
                         double **derivs, void *mpfit)
 {
@@ -43,27 +31,26 @@ void on_mpfit_iteration(void *mpfit)
 
 int MPfit::on_iteration()
 {
-    // max. iterations/evaluations number is handled in proper place by mpfit
-    return (int) common_termination_criteria(iter_nr_-start_iter_, false);
+    return (int) common_termination_criteria();
 }
 
 int MPfit::calculate(int /*m*/, int npar, double *par, double *deviates,
                      double **derivs)
 {
-    int stop = on_iteration();
-    if (stop)
-        return -1; // error code reserved for user function
+    // MP_NO_ITER is used only to calculate covariance matrix
+    if (mp_conf_.maxiter != MP_NO_ITER) {
+        int stop = on_iteration();
+        if (stop)
+            return -1; // error code reserved for user function
+    }
 
     vector<realt> A(par, par+npar);
     if (F_->get_verbosity() >= 1)
         output_tried_parameters(A);
-    //printf("wssr=%g, p0=%g, p1=%g\n", compute_wssr(A, dmdm_), par[0], par[1]);
     if (!derivs)
         compute_deviates(A, deviates);
-    else {
-        ++iter_nr_;
-        compute_derivatives_mp(A, dmdm_, derivs, deviates);
-    }
+    else
+        compute_derivatives_mp(A, fitted_datas_, derivs, deviates);
     return 0;
 }
 
@@ -88,7 +75,7 @@ const char* mpstatus_to_string(int n)
         case MP_OK_PAR: return "Convergence in parameter value";
         case MP_OK_BOTH: return "Convergence in chi2 and parameter value";
         case MP_OK_DIR: return "Convergence in orthogonality";
-        case MP_MAXITER: return "Maximum number of iterations reached";
+        case MP_MAXITER: return "Maximum number of evaluations reached";
         case MP_FTOL: return "ftol is too small; no further improvement";
         case MP_XTOL: return "xtol is too small; no further improvement";
         case MP_GTOL: return "gtol is too small; no further improvement";
@@ -99,27 +86,13 @@ const char* mpstatus_to_string(int n)
     }
 }
 
-void MPfit::autoiter()
+static
+mp_par* allocate_and_init_mp_par(const std::vector<bool>& par_usage)
 {
-    start_iter_ = iter_nr_;
-    wssr_before_ = compute_wssr(a_orig_, dmdm_);
-
-    int m = 0;
-    v_foreach (DataAndModel*, i, dmdm_)
-        m += (*i)->data()->get_n();
-
-    mp_conf_.maxiter = max_iterations_;
-    mp_conf_.maxfev = F_->get_settings()->max_wssr_evaluations;
-
-    //mp_conf_.ftol = F_->get_settings()->lm_stop_rel_change;
-
-    double *perror = new double[na_];
-    double *a = new double[na_];
-    mp_par *pars = new mp_par[na_];
-    for (int i = 0; i < na_; ++i) {
-        a[i] = a_orig_[i];
+    mp_par *pars = new mp_par[par_usage.size()];
+    for (size_t i = 0; i < par_usage.size(); ++i) {
         mp_par& p = pars[i];
-        p.fixed = 0;
+        p.fixed = !par_usage[i];
         p.limited[0] = 0; // no lower limit
         p.limited[1] = 0; // no upper limit
         p.limits[0] = 0.;
@@ -137,25 +110,147 @@ void MPfit::autoiter()
         p.deriv_reltol = 0.;
         p.deriv_abstol = 0.;
     }
+    return pars;
+}
 
-    // zero result_
-    result_.bestnorm = result_.orignorm = 0.;
-    result_.niter = result_.nfev = result_.status = 0;
-    result_.npar = result_.nfree = result_.npegged = result_.nfunc = 0;
-    result_.resid = result_.covar = NULL;
-    result_.xerror = perror;
+static
+void zero_init_result(mp_result *result)
+{
+    result->bestnorm = result->orignorm = 0.;
+    result->niter = result->nfev = result->status = 0;
+    result->npar = result->nfree = result->npegged = result->nfunc = 0;
+    result->resid = result->covar = NULL;
+    result->xerror = NULL;
+}
 
-    int status = mpfit(calculate_for_mpfit, m, na_, a, pars, &mp_conf_, this,
-                       &result_);
-    //printf("%d :: %d\n", iter_nr_, result_.niter);
-    //soft_assert(iter_nr_ + 1 == result_.niter);
-    //soft_assert(result_.nfev + 1 == evaluations_);
+static
+void init_config(mp_config_struct* mp_conf)
+{
+    // 0 value means default
+    mp_conf->ftol = 0.;
+    mp_conf->xtol = 0.;
+    mp_conf->gtol = 1e-100;
+    mp_conf->epsfcn = 0.;
+    mp_conf->stepfactor = 0.;
+    mp_conf->covtol = 0.;
+    mp_conf->maxiter = 0;
+    mp_conf->maxfev = 0;
+    mp_conf->nprint = 0;
+    mp_conf->douserscale = 0;
+    mp_conf->nofinitecheck = 0;
+    mp_conf->iterproc = NULL;
+}
+
+
+// final_a either has the same size as parameters or is NULL
+int MPfit::run_mpfit(const vector<Data*>& datas,
+                     const vector<realt>& parameters,
+                     const vector<bool>& param_usage,
+                     double *final_a)
+{
+    assert(param_usage.size() == parameters.size());
+
+    double *a = final_a ? final_a : new double[parameters.size()];
+    for (size_t i = 0; i != parameters.size(); ++i)
+        a[i] = parameters[i];
+
+    mp_par *pars = allocate_and_init_mp_par(param_usage);
+
+    if (F_->get_settings()->box_constraints) {
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            const Var* var = F_->mgr.gpos_to_var(i);
+            if (!var->domain.lo_inf()) {
+                pars[i].limited[0] = 1;
+                pars[i].limits[0] = var->domain.lo;
+            }
+            if (!var->domain.hi_inf()) {
+                pars[i].limited[1] = 1;
+                pars[i].limits[1] = var->domain.hi;
+            }
+        }
+    }
+
+#ifndef NDEBUG
+    if (debug_deriv_in_mpfit)
+        for (size_t i = 0; i < parameters.size(); ++i) {
+            // don't use side=2 (two-side) because of bug in CMPFIT
+            pars[i].side = 1;
+            pars[i].deriv_debug = 1;
+        }
+#endif
+
+    // datas cannot be easily passed to the calculate_for_mpfit() callback
+    // in a different way than through member variable (fitted_datas_).
+    int status;
+    if (&datas != &fitted_datas_) {
+        vector<Data*> saved = datas;
+        fitted_datas_.swap(saved);
+        status = mpfit(calculate_for_mpfit, count_points(datas),
+                       parameters.size(), a, pars, &mp_conf_, this, &result_);
+        fitted_datas_.swap(saved);
+    } else
+        status = mpfit(calculate_for_mpfit, count_points(datas),
+                       parameters.size(), a, pars, &mp_conf_, this, &result_);
     soft_assert(status == result_.status);
-    F_->msg("mpfit status: " + S(mpstatus_to_string(status)));
-    post_fit(vector<realt>(a, a+na_), result_.bestnorm);
     delete [] pars;
+    if (final_a == NULL)
+        delete [] a;
+    return status;
+}
+
+double MPfit::run_method(vector<realt>* best_a)
+{
+    init_config(&mp_conf_);
+    mp_conf_.maxiter = -2; // can't use 0 or 1 here (0=default, -1=MP_NO_ITER)
+    mp_conf_.maxfev = max_eval() - 1; // MPFIT has 1 evaluation extra
+    mp_conf_.ftol = F_->get_settings()->ftol_rel;
+    mp_conf_.xtol = F_->get_settings()->xtol_rel;
+    //mp_conf_.gtol = F_->get_settings()->mpfit_gtol;
+
+    zero_init_result(&result_);
+
+    double *a = new double[na_];
+    int status = run_mpfit(fitted_datas_, a_orig_, par_usage(), a);
+    //soft_assert(result_.nfev + 1 == evaluations_);
+    F_->msg("mpfit status: " + S(mpstatus_to_string(status)));
+    best_a->assign(a, a+na_);
     delete [] a;
-    delete [] perror;
+    return result_.bestnorm;
+}
+
+vector<double> MPfit::get_covariance_matrix(const vector<Data*>& datas)
+{
+    update_par_usage(datas);
+    vector<double> alpha(na_*na_, 0.);
+    init_config(&mp_conf_);
+    mp_conf_.maxiter = MP_NO_ITER;
+    zero_init_result(&result_);
+    result_.covar = &alpha[0]; // that's legal, vectors use contiguous storage
+    int status = run_mpfit(datas, F_->mgr.parameters(), par_usage());
+    soft_assert(status == MP_MAXITER);
+    result_.covar = NULL;
+    return alpha;
+}
+
+vector<double> MPfit::get_standard_errors(const vector<Data*>& datas)
+{
+    double wssr = compute_wssr(F_->mgr.parameters(), datas, true);
+    double err_factor = sqrt(wssr / get_dof(datas));
+    // `na_' was set by get_dof() above, from update_par_usage()
+    vector<double> errors(na_, 0.);
+
+    init_config(&mp_conf_);
+    mp_conf_.maxiter = MP_NO_ITER;
+    zero_init_result(&result_);
+    result_.xerror = &errors[0]; // that's legal
+
+    int status = run_mpfit(datas, F_->mgr.parameters(), par_usage());
+    soft_assert(status == MP_MAXITER || status == MP_OK_DIR);
+    result_.xerror = NULL;
+
+    for (int i = 0; i < na_; ++i)
+        errors[i] *= err_factor;
+    return errors;
 }
 
 } // namespace fityk

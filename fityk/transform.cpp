@@ -1,11 +1,10 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 /// virtual machine for dataset transformations (@n = ...)
 
 #define BUILDING_LIBFITYK
 #include "transform.h"
 #include "logic.h"
-#include "lexer.h"
 #include "data.h"
 
 using namespace std;
@@ -100,8 +99,8 @@ void shirley_bg(vector<Point> &pp)
 
 namespace fityk {
 
-/// executes VM code and stores results in Dataset `out'
-void DatasetTransformer::run_dt(const VMData& vm, int out)
+/// executes VM code and stores results in dataset `data_out'
+void run_data_transform(const DataKeeper& dk, const VMData& vm, Data* data_out)
 {
     DtStackItem stack[6];
     DtStackItem* stackPtr = stack - 1; // will be ++'ed first
@@ -124,8 +123,8 @@ void DatasetTransformer::run_dt(const VMData& vm, int out)
                     throw ExecuteError("stack overflow");
                 stackPtr->is_num = false;
                 ++i;
-                stackPtr->points = F_->get_data(*i)->points();
-                stackPtr->title = F_->get_data(*i)->get_title();
+                stackPtr->points = dk.data(*i)->points();
+                stackPtr->title = dk.data(*i)->get_title();
                 if (stackPtr->title.empty())
                     stackPtr->title = "nt"; // no title
                 break;
@@ -148,8 +147,7 @@ void DatasetTransformer::run_dt(const VMData& vm, int out)
                     vm_foreach (Point, j, stackPtr->points)
                         j->y += find_extrapolated_y((stackPtr+1)->points, j->x);
                     stackPtr->title += "+" + (stackPtr+1)->title;
-                }
-                else
+                } else
                     throw ExecuteError("adding number and dataset");
                 break;
 
@@ -161,8 +159,7 @@ void DatasetTransformer::run_dt(const VMData& vm, int out)
                     vm_foreach (Point, j, stackPtr->points)
                         j->y -= find_extrapolated_y((stackPtr+1)->points, j->x);
                     stackPtr->title += "-" + (stackPtr+1)->title;
-                }
-                else
+                } else
                     throw ExecuteError("substracting number and dataset");
                 break;
 
@@ -172,14 +169,12 @@ void DatasetTransformer::run_dt(const VMData& vm, int out)
                     stackPtr->num *= (stackPtr+1)->num;
                 else if (!stackPtr->is_num && !(stackPtr+1)->is_num) {
                     throw ExecuteError("multiplying two datasets");
-                }
-                else if (!stackPtr->is_num && (stackPtr+1)->is_num) {
+                } else if (!stackPtr->is_num && (stackPtr+1)->is_num) {
                     realt mult = (stackPtr+1)->num;
                     vm_foreach (Point, j, stackPtr->points)
                         j->y *= mult;
                     stackPtr->title += "*" + S(mult);
-                }
-                else if (stackPtr->is_num && !(stackPtr+1)->is_num) {
+                } else if (stackPtr->is_num && !(stackPtr+1)->is_num) {
                     realt mult = stackPtr->num;
                     stackPtr->points.swap((stackPtr+1)->points);
                     stackPtr->is_num = false;
@@ -229,18 +224,11 @@ void DatasetTransformer::run_dt(const VMData& vm, int out)
     }
     assert(stackPtr == stack);
 
-    // change dataset `out'
-    if (out == Lexer::kNew) {
-        F_->append_dm();
-        out = F_->get_dm_count() - 1;
-    }
-    Data *data = F_->get_data(out);
     if (!stackPtr->is_num) {
-        data->set_points(stackPtr->points);
-        data->set_title(stackPtr->title);
-    }
-    else if (stackPtr->num == 0.)
-        data->clear();
+        data_out->set_points(stackPtr->points);
+        data_out->set_title(stackPtr->title);
+    } else if (stackPtr->num == 0.)
+        data_out->clear();
     else
         throw ExecuteError("dataset or 0 expected on RHS");
 }

@@ -6,7 +6,7 @@
 
 #include <string>
 #include <vector>
-#include "fityk.h" //FITYK_API
+#include "fityk.h" // FITYK_API
 
 namespace fityk {
 
@@ -39,15 +39,12 @@ public:
     virtual Status exec_and_log(const std::string& c) = 0;
 
     /// Excute commands from file, i.e. run a script (.fit).
-    virtual void exec_script(const std::string& filename) = 0;
-
-    // interprets command-line argument as data or script file or as command
-    virtual void process_cmd_line_arg(const std::string& arg) = 0;
+    virtual void exec_fityk_script(const std::string& filename) = 0;
 
     // Callbacks. connect_*() returns old callback.
 
     // Callback for plotting.
-    typedef void t_draw_plot_callback(RepaintMode mode);
+    typedef void t_draw_plot_callback(RepaintMode mode, const char* filename);
     t_draw_plot_callback* connect_draw_plot(t_draw_plot_callback *func);
 
     // Callback for text output. Initially, a callback suitable for CLI
@@ -64,12 +61,17 @@ public:
     // This callback is called with arg=0 before time-consuming computation,
     // after the computation with arg=1,
     // and periodically during computations with arg=-1.
-    typedef void t_hint_ui_callback(int);
+    typedef void t_hint_ui_callback(const std::string& key,
+                                    const std::string& value);
     t_hint_ui_callback* connect_hint_ui(t_hint_ui_callback *func);
 
     // Callback for querying user.
     typedef std::string t_user_input_callback(const std::string& prompt);
     t_user_input_callback* connect_user_input(t_user_input_callback *func);
+
+    // Callback for ui state
+    typedef std::string t_ui_state_callback();
+    t_ui_state_callback* connect_ui_state(t_ui_state_callback *func);
 
 protected:
     t_show_message_callback *show_message_callback_;
@@ -77,6 +79,7 @@ protected:
     t_exec_command_callback *exec_command_callback_;
     t_hint_ui_callback *hint_ui_callback_;
     t_user_input_callback *user_input_callback_;
+    t_ui_state_callback *ui_state_callback_;
 };
 
 /// Helper for readline tab-completion.
@@ -88,8 +91,9 @@ complete_fityk_line(Fityk *F, const char* line_buffer, int start, int end,
 
 FITYK_API const char* startup_commands_filename(); // "init"
 FITYK_API const char* config_dirname(); // ".fityk"
-/// flag that is set to interrupt fitting (it is checked after each iteration)
-extern volatile FITYK_API bool user_interrupt;
+/// stops fitting after the current iteration
+FITYK_API void interrupt_computations();
+FITYK_API void interrupt_computations_on_sigint();
 
 } // namespace fityk
 #endif // FITYK_UI_API_H_

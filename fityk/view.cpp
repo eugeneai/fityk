@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #define BUILDING_LIBFITYK
@@ -19,7 +19,7 @@ string View::str() const
 {
     char buffer[128];
     sprintf(buffer, "[%.12g:%.12g] [%.12g:%.12g]",
-            hor.from, hor.to, ver.from, ver.to);
+            hor.lo, hor.hi, ver.lo, ver.hi);
     return string(buffer);
 }
 
@@ -34,14 +34,12 @@ void View::change_view(const RealRange& hor_r, const RealRange& ver_r,
     // For the first dataset in `dataset' (@n, it doesn't contain @*) both
     // data points and models are considered.
     // For the next ones only data points.
-    DataAndModel const* first = F->get_dm(datasets[0]);
-    vector<Model const*> models(1, first->model());
-    vector<Data const*> datas(datasets.size());
-    datas[0] = first->data();
-    for (size_t i = 1; i < datasets.size(); ++i)
-        datas[i] = F->get_dm(datasets[i])->data();
+    vector<const Data*> datas(datasets.size());
+    for (size_t i = 0; i != datasets.size(); ++i)
+        datas[i] = dk_->data(datasets[i]);
+    vector<const Model*> models(1, datas[0]->model());
 
-    if (hor.from_inf() || hor.to_inf()) {
+    if (hor.lo_inf() || hor.hi_inf()) {
         double x_min=0, x_max=0;
         get_x_range(datas, x_min, x_max);
         if (x_min == x_max) {
@@ -49,24 +47,23 @@ void View::change_view(const RealRange& hor_r, const RealRange& ver_r,
             x_max += 0.1;
         }
         if (log_x_) {
-            x_min = max(epsilon, x_min);
+            x_min = max(epsilon, x_min); // 'max' is intentional
             x_max = max(epsilon, x_max);
             double margin = log(x_max / x_min) * relative_x_margin;
-            if (hor.from_inf())
-                hor.from = exp(log(x_min) - margin);
-            if (hor.to_inf())
-                hor.to = exp(log(x_max) + margin);
-        }
-        else {
+            if (hor.lo_inf())
+                hor.lo = exp(log(x_min) - margin);
+            if (hor.hi_inf())
+                hor.hi = exp(log(x_max) + margin);
+        } else {
             double margin = (x_max - x_min) * relative_x_margin;
-            if (hor.from_inf())
-                hor.from = x_min - margin;
-            if (hor.to_inf())
-                hor.to = x_max + margin;
+            if (hor.lo_inf())
+                hor.lo = x_min - margin;
+            if (hor.hi_inf())
+                hor.hi = x_max + margin;
         }
     }
 
-    if (ver.from_inf() || ver.to_inf()) {
+    if (ver.lo_inf() || ver.hi_inf()) {
         double y_min=0, y_max=0;
         get_y_range(datas, models, y_min, y_max);
         if (y_min == y_max) {
@@ -74,20 +71,19 @@ void View::change_view(const RealRange& hor_r, const RealRange& ver_r,
             y_max += 0.1;
         }
         if (log_y_) {
-            y_min = max(epsilon, y_min);
+            y_min = max(epsilon, y_min); // 'max' is intentional
             y_max = max(epsilon, y_max);
             double margin = log(y_max / y_min) * relative_y_margin;
-            if (ver.from_inf())
-                ver.from = exp(log(y_min) - margin);
-            if (ver.to_inf())
-                ver.to = exp(log(y_max) + margin);
-        }
-        else {
+            if (ver.lo_inf())
+                ver.lo = exp(log(y_min) - margin);
+            if (ver.hi_inf())
+                ver.hi = exp(log(y_max) + margin);
+        } else {
             double margin = (y_max - y_min) * relative_y_margin;
-            if (ver.from_inf())
-                ver.from = y_min - margin;
-            if (ver.to_inf())
-                ver.to = y_max + margin;
+            if (ver.lo_inf())
+                ver.lo = y_min - margin;
+            if (ver.hi_inf())
+                ver.hi = y_max + margin;
         }
     }
 }
@@ -112,19 +108,22 @@ void View::get_y_range(vector<Data const*> datas, vector<Model const*> models,
 {
     if (datas.empty())
         throw ExecuteError("Can't find x-y axes ranges for plot");
-    y_min = y_max = (datas.front()->get_n() > 0 ? datas.front()->get_y(0) : 0);
     bool min_max_set = false;
     v_foreach (Data const*, i, datas) {
-        vector<Point>::const_iterator f = (*i)->get_point_at(hor.from);
-        vector<Point>::const_iterator l = (*i)->get_point_at(hor.to);
+        vector<Point>::const_iterator f = (*i)->get_point_at(hor.lo);
+        vector<Point>::const_iterator l = (*i)->get_point_at(hor.hi);
         //first we are searching for minimal and max. y in active points
         for (vector<Point>::const_iterator j = f; j < l; ++j) {
             if (j->is_active && is_finite(j->y)) {
-                min_max_set = true;
-                if (j->y > y_max)
-                    y_max = j->y;
-                if (j->y < y_min)
-                    y_min = j->y;
+                if (min_max_set) {
+                    if (j->y > y_max)
+                        y_max = j->y;
+                    if (j->y < y_min)
+                        y_min = j->y;
+                } else {
+                    y_min = y_max= j->y;
+                    min_max_set = true;
+                }
             }
         }
     }
@@ -132,12 +131,12 @@ void View::get_y_range(vector<Data const*> datas, vector<Model const*> models,
     if (!min_max_set || y_min == y_max) { //none or 1 active point, so now we
                                    // search for min. and max. y in all points
         v_foreach (Data const*, i, datas) {
-            vector<Point>::const_iterator f = (*i)->get_point_at(hor.from);
-            vector<Point>::const_iterator l = (*i)->get_point_at(hor.to);
+            vector<Point>::const_iterator f = (*i)->get_point_at(hor.lo);
+            vector<Point>::const_iterator l = (*i)->get_point_at(hor.hi);
             for (vector<Point>::const_iterator j = f; j < l; ++j) {
                 if (!is_finite(j->y))
                     continue;
-                min_max_set = true;
+                // min_max_set = true;
                 if (j->y > y_max)
                     y_max = j->y;
                 if (j->y < y_min)
@@ -151,7 +150,7 @@ void View::get_y_range(vector<Data const*> datas, vector<Model const*> models,
         if (model->get_ff().empty())
             continue;
         // estimated model maximum
-        double model_y_max = model->approx_max(hor.from, hor.to);
+        double model_y_max = model->approx_max(hor.lo, hor.hi);
         if (model_y_max > y_max)
             y_max = model_y_max;
         if (model_y_max < y_min)

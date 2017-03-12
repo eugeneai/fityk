@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #include <wx/wx.h>
@@ -87,17 +87,6 @@ void PlotPane::refresh_plots(bool now, WhichPlot which_plot)
     }
 }
 
-bool PlotPane::is_background_white()
-{
-    //have all visible plots white background?
-    if (plot_->get_bg_color() != *wxWHITE)
-        return false;
-    for (int i = 0; i < 2; ++i)
-        if (aux_visible(i) && aux_plot_[i]->get_bg_color() != *wxWHITE)
-            return false;
-    return true;
-}
-
 bool PlotPane::aux_visible(int n) const
 {
     return IsSplit() && (aux_split_->GetWindow1() == aux_plot_[n]
@@ -121,13 +110,11 @@ void PlotPane::show_aux(int n, bool show)
                 aux_plot_[n]->Show(true);
                 aux_split_->Unsplit(aux_plot_[n==0 ? 1 : 0]);
             }
-        }
-        else {//one was invisible
+        } else {//one was invisible
             aux_split_->SplitHorizProp(aux_plot_[0], aux_plot_[1]);
             aux_plot_[n]->Show(true);
         }
-    }
-    else { //hide
+    } else { //hide
         if (aux_split_->IsSplit()) //both where visible
             aux_split_->Unsplit(aux_plot_[n]);
         else // only one was visible
@@ -146,17 +133,22 @@ void PlotPane::draw_vertical_lines(int X1, int X2, FPlot* skip)
 
 wxBitmap PlotPane::prepare_bitmap_for_export(int W, int H, bool include_aux)
 {
-    int my = get_plot()->get_bitmap().GetSize().y;
+    // bitmap depth is given explicitely - which is also a workaround for
+    // http://trac.wxwidgets.org/ticket/13328
+    const int depth = 32;
     int th = H;
     int ah[2] = { 0, 0 };
-    for (int i = 0; i != 2; ++i)
-        if (include_aux && aux_visible(i)) {
-            int ay = get_aux_plot(i)->GetClientSize().y;
-            ah[i] = iround(ay * H / my);
-            th += 5 + ah[i];
-        }
+    if (include_aux) {
+        int my = get_plot()->get_bitmap().GetSize().y;
+        for (int i = 0; i != 2; ++i)
+            if (aux_visible(i)) {
+                int ay = get_aux_plot(i)->GetClientSize().y;
+                ah[i] = iround(ay * H / my);
+                th += 5 + ah[i];
+            }
+    }
 
-    wxBitmap bmp(W, th);
+    wxBitmap bmp(W, th, depth);
     wxMemoryDC memory_dc(bmp);
     MainPlot *plot = get_plot();
     MouseModeEnum old_mode = plot->get_mouse_mode();
@@ -165,14 +157,14 @@ wxBitmap PlotPane::prepare_bitmap_for_export(int W, int H, bool include_aux)
     // and changing the mode would prevent drawing the baseline.
     if (plot->get_mouse_mode() != mmd_bg)
         plot->set_mode(mmd_readonly);
-    memory_dc.DrawBitmap(plot->draw_on_bitmap(W, H), 0, 0);
+    memory_dc.DrawBitmap(plot->draw_on_bitmap(W, H, depth), 0, 0);
     plot->set_mode(old_mode);
 
     int y = H + 5;
     for (int i = 0; i != 2; ++i)
         if (include_aux && aux_visible(i)) {
             AuxPlot *aplot = get_aux_plot(i);
-            memory_dc.DrawBitmap(aplot->draw_on_bitmap(W, ah[i]), 0, y);
+            memory_dc.DrawBitmap(aplot->draw_on_bitmap(W, ah[i], depth), 0, y);
             y += ah[i] + 5;
         }
     return bmp;

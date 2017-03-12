@@ -1,15 +1,14 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
-#ifndef FITYK__AST__H__
-#define FITYK__AST__H__
+#ifndef FITYK_AST_H_
+#define FITYK_AST_H_
 
 #include <assert.h>
 #include "vm.h" // opcodes
+#include "common.h" // DISALLOW_COPY_AND_ASSIGN
 
 namespace fityk {
-
-struct Tplate;
 
 struct OpTreeFormat
 {
@@ -54,6 +53,8 @@ struct OpTree
                && (c1 == t.c1 || (c1 && t.c1 && *c1 == *t.c1))
                && (c2 == t.c2 || (c2 && t.c2 && *c2 == *t.c2));
     }
+private:
+    DISALLOW_COPY_AND_ASSIGN(OpTree);
 };
 
 std::vector<OpTree*> prepare_ast_with_der(const VMData& vm, int len);

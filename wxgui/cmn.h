@@ -1,4 +1,4 @@
-// This file is part of fityk program. Copyright (C) Marcin Wojdyr
+// This file is part of fityk program. Copyright 2001-2013 Marcin Wojdyr
 // Licence: GNU General Public License ver. 2+
 
 #ifndef FITYK_WX_CMN_H_
@@ -10,6 +10,7 @@
 #include <wx/arrstr.h>
 #include <wx/spinctrl.h>
 #include <wx/mstream.h>
+#include <wx/ffile.h>
 
 // input mode, changes functions of left and right clicks
 enum MouseModeEnum {
@@ -27,12 +28,12 @@ enum PlotTypeEnum { pte_main, pte_aux };
 // used in refresh_plots()
 enum WhichPlot { kMainPlot, kAllPlots };
 
-inline wxString pchar2wx(char const* pc) { return wxString(pc, wxConvLibc); }
+inline wxString pchar2wx(char const* pc) { return wxString::FromUTF8(pc); }
 
 inline wxString s2wx(std::string const& s) { return pchar2wx(s.c_str()); }
 
 inline std::string wx2s(wxString const& w)
-                        { return std::string((const char*) w.mb_str()); }
+                        { return std::string((const char*) w.ToUTF8()); }
 
 inline wxArrayString stl2wxArrayString(std::vector<std::string> const& vs)
 {
@@ -213,6 +214,17 @@ public:
     TextComboDlg(wxWindow *parent, const wxString& message,
                  const wxString& caption);
     wxComboBox *combo;
+};
+
+// this wrapper is only to avoid wxLogSysError when the file can't be open
+class FFile: public wxFFile
+{
+public:
+    FFile(const wxString& filename, const wxString& mode) {
+        FILE* fp = wxFopen(filename, mode);
+        if (fp)
+            Attach(fp, filename);
+    }
 };
 
 #endif // FITYK_WX_CMN_H_
